@@ -452,7 +452,7 @@ parkview:
       # Listed after the staff reads above (versions, changes, areas, views), which need spot:read. Other GETs under /mapping, /zones and /sites are denied.
       - { paths: ["/api/v1/mapping/zones/*/spots", "/api/v1/mapping/zones/*/geojson", "/api/v1/mapping/spots/*",
                   "/api/v1/mapping/sites/*/spots", "/api/v1/mapping/sites/*/spots/geojson",
-                  "/api/v1/zones", "/api/v1/zones/nearest", "/api/v1/zones/*/rules",
+                  "/api/v1/zones", "/api/v1/zones/*", "/api/v1/zones/nearest", "/api/v1/zones/*/rules",
                   "/api/v1/sites", "/api/v1/sites/*", "/api/v1/sites/*/spots", "/api/v1/sites/*/spots/geojson", "/api/v1/sites/*/rules"],
           methods: [GET, HEAD], access: AUTHENTICATED }
       # the overlap check is a read in disguise: the service accepts zone:read, spot:read, zone:write or spot:write (a single gateway permission cannot say "any of")
