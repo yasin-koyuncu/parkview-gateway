@@ -21,7 +21,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class GatewayErrorHandlerTest {
 
     private final ObjectMapper mapper = new ObjectMapper();
-    private final GatewayErrorHandler handler = new GatewayErrorHandler(mapper, new ErrorMessagesConfig().errorMessages());
+    private final GatewayErrorHandler handler = new GatewayErrorHandler(new ProblemWriter(mapper, new ErrorMessagesConfig().errorMessages()));
 
     private JsonNode answer(String acceptLanguage, Throwable failure, HttpStatus expected) throws Exception {
         MockServerHttpRequest.BaseBuilder<?> request = MockServerHttpRequest.get("/api/v1/nothing");

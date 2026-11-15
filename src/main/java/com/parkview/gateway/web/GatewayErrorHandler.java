@@ -1,12 +1,9 @@
 package com.parkview.gateway.web;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.netty.handler.timeout.ReadTimeoutException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.web.reactive.error.ErrorWebExceptionHandler;
-import org.springframework.context.MessageSource;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpStatus;
@@ -17,7 +14,12 @@ import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 
 import java.net.ConnectException;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.TimeoutException;
+import java.util.function.Function;
+import java.util.stream.Stream;
 
 /**
  * Turns gateway-level failures (no such route, upstream down, upstream too slow) into the platform's
@@ -32,80 +34,67 @@ public class GatewayErrorHandler implements ErrorWebExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GatewayErrorHandler.class);
 
-    private final ObjectMapper mapper;
-    private final MessageSource messages;
+    private static final String UPSTREAM_UNAVAILABLE_KEY = "error.upstreamUnavailable";
+    private static final String UPSTREAM_UNAVAILABLE = "The upstream service is currently unavailable";
 
-    public GatewayErrorHandler(ObjectMapper mapper, @Qualifier("errorMessages") MessageSource messages) {
-        this.mapper = mapper;
-        this.messages = messages;
+    /** The statuses with a text of their own; every other status gets {@code title.http.<status>} / {@code error.http.<status>} (see {@link #problemFor}). */
+    private static final Map<HttpStatus, GatewayProblem> KNOWN_PROBLEMS = Map.of(
+            HttpStatus.NOT_FOUND, new GatewayProblem(
+                    "title.noRoute", "Not found", "error.noRoute", "No route matches this request"),
+            HttpStatus.BAD_GATEWAY, new GatewayProblem(
+                    "title.badGateway", "Bad gateway", UPSTREAM_UNAVAILABLE_KEY, UPSTREAM_UNAVAILABLE),
+            HttpStatus.SERVICE_UNAVAILABLE, new GatewayProblem(
+                    "title.serviceUnavailable", "Service unavailable", UPSTREAM_UNAVAILABLE_KEY, UPSTREAM_UNAVAILABLE),
+            HttpStatus.GATEWAY_TIMEOUT, new GatewayProblem(
+                    "title.gatewayTimeout", "Gateway timeout", "error.upstreamTimeout", "The upstream service did not answer in time"));
+
+    /**
+     * What a failure in the cause chain means, tried in this order on every cause from the outermost: the status it carries, a
+     * timeout is 504, a connection that failed or was closed early is 502. A classifier answers {@code null} for a cause it does not know.
+     */
+    private static final List<Function<Throwable, HttpStatusCode>> CLASSIFIERS = List.of(
+            cause -> cause instanceof ResponseStatusException rse ? rse.getStatusCode() : null,
+            cause -> cause instanceof TimeoutException || cause instanceof ReadTimeoutException ? HttpStatus.GATEWAY_TIMEOUT : null,
+            cause -> cause instanceof ConnectException || isNamed(cause, "ConnectTimeout") || isNamed(cause, "PrematureClose")
+                    ? HttpStatus.BAD_GATEWAY : null);
+
+    private final ProblemWriter problems;
+
+    public GatewayErrorHandler(ProblemWriter problems) {
+        this.problems = problems;
     }
 
     @Override
     public Mono<Void> handle(ServerWebExchange exchange, Throwable ex) {
-        HttpStatusCode status = statusFor(ex);
-        HttpStatus http = HttpStatus.valueOf(status.value());
+        HttpStatus http = HttpStatus.valueOf(statusFor(ex).value());
 
         if (http.is5xxServerError()) {
             log.warn("Gateway error {} for requestId={}: {}",
                     http.value(), exchange.getAttribute(EdgeHeadersWebFilter.REQUEST_ID_ATTRIBUTE), ex.toString());
         }
-        return ProblemResponses.writeLocalized(exchange, mapper, messages, http,
-                titleKey(http), title(http), detailKey(http), detail(http));
+        return problems.write(exchange, http, problemFor(http));
     }
 
-    private static String titleKey(HttpStatus status) {
-        return switch (status) {
-            case NOT_FOUND -> "title.noRoute";
-            case BAD_GATEWAY -> "title.badGateway";
-            case GATEWAY_TIMEOUT -> "title.gatewayTimeout";
-            case SERVICE_UNAVAILABLE -> "title.serviceUnavailable";
-            default -> "title.http." + status.value();
-        };
-    }
-
-    private static String detailKey(HttpStatus status) {
-        return switch (status) {
-            case NOT_FOUND -> "error.noRoute";
-            case BAD_GATEWAY, SERVICE_UNAVAILABLE -> "error.upstreamUnavailable";
-            case GATEWAY_TIMEOUT -> "error.upstreamTimeout";
-            default -> status.is5xxServerError() ? "error.internal" : "error.http." + status.value();
-        };
+    private static GatewayProblem problemFor(HttpStatus status) {
+        GatewayProblem known = KNOWN_PROBLEMS.get(status);
+        if (known != null) {
+            return known;
+        }
+        boolean serverError = status.is5xxServerError();
+        return new GatewayProblem(
+                "title.http." + status.value(), status.getReasonPhrase(),
+                serverError ? "error.internal" : "error.http." + status.value(),
+                serverError ? "An unexpected error occurred" : status.getReasonPhrase());
     }
 
     private static HttpStatusCode statusFor(Throwable ex) {
-        Throwable cause = ex;
-        while (cause != null) {
-            if (cause instanceof ResponseStatusException rse) {
-                return rse.getStatusCode();
-            }
-            if (cause instanceof TimeoutException || cause instanceof ReadTimeoutException) {
-                return HttpStatus.GATEWAY_TIMEOUT;
-            }
-            if (cause instanceof ConnectException || cause.getClass().getName().contains("ConnectTimeout")
-                    || cause.getClass().getName().contains("PrematureClose")) {
-                return HttpStatus.BAD_GATEWAY;
-            }
-            cause = cause.getCause() == cause ? null : cause.getCause();
-        }
-        return HttpStatus.INTERNAL_SERVER_ERROR;
+        return Stream.iterate(ex, Objects::nonNull, cause -> cause.getCause() == cause ? null : cause.getCause())
+                .flatMap(cause -> CLASSIFIERS.stream().map(classifier -> classifier.apply(cause)).filter(Objects::nonNull))
+                .findFirst()
+                .orElse(HttpStatus.INTERNAL_SERVER_ERROR);
     }
 
-    private static String title(HttpStatus status) {
-        return switch (status) {
-            case NOT_FOUND -> "Not found";
-            case BAD_GATEWAY -> "Bad gateway";
-            case GATEWAY_TIMEOUT -> "Gateway timeout";
-            case SERVICE_UNAVAILABLE -> "Service unavailable";
-            default -> status.getReasonPhrase();
-        };
-    }
-
-    private static String detail(HttpStatus status) {
-        return switch (status) {
-            case NOT_FOUND -> "No route matches this request";
-            case BAD_GATEWAY, SERVICE_UNAVAILABLE -> "The upstream service is currently unavailable";
-            case GATEWAY_TIMEOUT -> "The upstream service did not answer in time";
-            default -> status.is5xxServerError() ? "An unexpected error occurred" : status.getReasonPhrase();
-        };
+    private static boolean isNamed(Throwable cause, String fragment) {
+        return cause.getClass().getName().contains(fragment);
     }
 }

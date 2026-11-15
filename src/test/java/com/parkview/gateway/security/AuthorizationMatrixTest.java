@@ -250,8 +250,9 @@ class AuthorizationMatrixTest {
         assertThat(status(HttpMethod.GET, "/api/v1/sessions/7/history", driver)).isEqualTo(403);
         // the finer rules apply to the listed methods only
         assertThat(status(HttpMethod.GET, "/api/v1/sessions/7/end", driver)).as("not listed for GET: denied").isEqualTo(403);
-        assertThat(status(HttpMethod.GET, "/api/v1/fines/f1/void", driver)).isEqualTo(200);
-        assertThat(status(HttpMethod.POST, "/api/v1/fines/f1/history", driver)).isEqualTo(200);
+        // ... and so does the list of fine endpoints that need only a token: there is no prefix rule behind it any more
+        assertThat(status(HttpMethod.GET, "/api/v1/fines/f1/void", driver)).isEqualTo(403);
+        assertThat(status(HttpMethod.POST, "/api/v1/fines/f1/history", driver)).isEqualTo(403);
     }
 
     @Test
@@ -453,7 +454,7 @@ class AuthorizationMatrixTest {
         assertThat(status(HttpMethod.GET, "/api/v1/fines/f1/evidence", reader)).isEqualTo(200);
         assertThat(status(HttpMethod.GET, "/api/v1/disputes", reader)).isEqualTo(403);
         // the finer rules apply to the listed methods only: the evidence is GET, withdraw is POST
-        assertThat(status(HttpMethod.POST, "/api/v1/fines/f1/evidence", driver)).isEqualTo(200);
+        assertThat(status(HttpMethod.POST, "/api/v1/fines/f1/evidence", driver)).isEqualTo(403);
         assertThat(status(HttpMethod.GET, "/api/v1/disputes/d1/withdraw", driver)).isEqualTo(403);
     }
 
@@ -467,8 +468,55 @@ class AuthorizationMatrixTest {
             assertThat(status(HttpMethod.GET, path, Map.of("role", "driver", "permissions", List.of()))).as(path + " driver").isEqualTo(200);
             assertThat(status(HttpMethod.GET, path, Map.of("role", "operator", "permissions", List.of()))).as(path + " operator").isEqualTo(200);
         }
-        assertThat(status(HttpMethod.PUT, "/api/v1/users/me", Map.of("role", "driver"))).isEqualTo(200);
-        assertThat(status(HttpMethod.PUT, "/api/v1/users/me", null)).isEqualTo(401);
+        assertThat(status(HttpMethod.PUT, "/api/v1/users/me/profile", Map.of("role", "driver"))).isEqualTo(200);
+        assertThat(status(HttpMethod.PUT, "/api/v1/users/me/profile", null)).isEqualTo(401);
+    }
+
+    @Test
+    void theEndpointsOfFinesUsersAndNotificationsAreListedByMethodAndNoPrefixLetsOthersThrough() {
+        record Call(HttpMethod method, String path) {
+        }
+        Map<String, Object> driver = Map.of("role", "driver", "permissions", List.of());
+        for (Call call : List.of(
+                new Call(HttpMethod.GET, "/api/v1/fines/plate/ABC123"), new Call(HttpMethod.GET, "/api/v1/fines/site/s1"),
+                new Call(HttpMethod.GET, "/api/v1/fines/zone/z1"), new Call(HttpMethod.GET, "/api/v1/fines/f1"),
+                new Call(HttpMethod.HEAD, "/api/v1/fines/f1"), new Call(HttpMethod.HEAD, "/api/v1/fines/f1/explanation"),
+                new Call(HttpMethod.GET, "/api/v1/users/me/profile"), new Call(HttpMethod.GET, "/api/v1/users/me/plates"),
+                new Call(HttpMethod.POST, "/api/v1/users/me/plates"), new Call(HttpMethod.DELETE, "/api/v1/users/me/plates/p1"),
+                new Call(HttpMethod.PUT, "/api/v1/users/me/profile"))) {
+            assertThat(status(call.method(), call.path(), driver)).as(call + " driver").isEqualTo(200);
+            assertThat(status(call.method(), call.path(), null)).as(call + " anonymous").isEqualTo(401);
+        }
+        // paths and methods the services do not serve were open to every signed-in user through `/fines/**`, `/users/**` and
+        // `/notifications/**`: now denied (HEAD of the permission-gated reads too: it passed with a plain token before)
+        for (Call call : List.of(
+                new Call(HttpMethod.GET, "/api/v1/fines"), new Call(HttpMethod.POST, "/api/v1/fines"), new Call(HttpMethod.POST, "/api/v1/fines/f1"),
+                new Call(HttpMethod.DELETE, "/api/v1/fines/f1"), new Call(HttpMethod.HEAD, "/api/v1/fines/f1/history"),
+                new Call(HttpMethod.HEAD, "/api/v1/fines/f1/evidence"), new Call(HttpMethod.GET, "/api/v1/fines/f1/other"),
+                new Call(HttpMethod.GET, "/api/v1/users/me"), new Call(HttpMethod.PUT, "/api/v1/users/me/plates"),
+                new Call(HttpMethod.GET, "/api/v1/users/me/plates/p1"), new Call(HttpMethod.DELETE, "/api/v1/users/me/profile"),
+                new Call(HttpMethod.GET, "/api/v1/notifications/n1"), new Call(HttpMethod.DELETE, "/api/v1/notifications/n1"),
+                new Call(HttpMethod.GET, "/api/v1/notifications/read-all"), new Call(HttpMethod.GET, "/api/v1/notifications/push-subscription"))) {
+            assertThat(status(call.method(), call.path(), driver)).as(call + " driver").isEqualTo(403);
+            assertThat(status(call.method(), call.path(), null)).as(call + " anonymous").isEqualTo(401);
+        }
+    }
+
+    @Test
+    void theAuthEndpointsArePublicByMethodAndOtherAuthPathsAreDenied() {
+        for (String path : List.of("/api/v1/auth/login", "/api/v1/auth/register", "/api/v1/auth/refresh", "/api/v1/auth/reset-password",
+                "/api/v1/auth/oauth/authorize", "/api/v1/auth/oauth/token", "/api/v1/auth/logout")) {
+            assertThat(status(HttpMethod.POST, path, null)).as("POST " + path).isEqualTo(200);
+            assertThat(status(HttpMethod.GET, path, null)).as("GET " + path).isEqualTo(401);
+        }
+        for (String path : List.of("/api/v1/auth/locales", "/api/v1/auth/me")) {
+            assertThat(status(HttpMethod.GET, path, null)).as("GET " + path).isEqualTo(200);
+            assertThat(status(HttpMethod.HEAD, path, null)).as("HEAD " + path).isEqualTo(200);
+            assertThat(status(HttpMethod.POST, path, null)).as("POST " + path).isEqualTo(401);
+        }
+        assertThat(status(HttpMethod.GET, "/api/v1/auth", null)).isEqualTo(401);
+        assertThat(status(HttpMethod.POST, "/api/v1/auth/other", null)).isEqualTo(401);
+        assertThat(status(HttpMethod.POST, "/api/v1/auth/oauth", null)).isEqualTo(401);
     }
 
     // ── permits: reads and writes apart ─────────────────────────────────────────

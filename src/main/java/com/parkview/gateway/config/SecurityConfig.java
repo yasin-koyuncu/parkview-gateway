@@ -1,29 +1,20 @@
 package com.parkview.gateway.config;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.parkview.gateway.security.InternalKeyAuthorization;
 import com.parkview.gateway.security.ParkviewJwtConverter;
 import com.parkview.gateway.security.RuleAuthorizer;
 import com.parkview.gateway.security.SseTokenBearerConverter;
-import com.parkview.gateway.web.ProblemResponses;
-import com.parkview.platform.security.InternalApiKeys;
-import org.springframework.beans.factory.annotation.Qualifier;
+import com.parkview.gateway.web.ProblemAuthenticationHandlers;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
-import org.springframework.context.MessageSource;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
-import org.springframework.http.HttpStatus;
-import org.springframework.security.authorization.AuthorizationDecision;
-import org.springframework.security.authorization.ReactiveAuthorizationManager;
 import org.springframework.security.config.annotation.web.reactive.EnableWebFluxSecurity;
 import org.springframework.security.config.web.server.ServerHttpSecurity;
-import org.springframework.security.core.Authentication;
 import org.springframework.security.oauth2.jwt.ReactiveJwtDecoder;
 import org.springframework.security.web.server.SecurityWebFilterChain;
-import org.springframework.security.web.server.authorization.AuthorizationContext;
 import org.springframework.security.web.server.header.ReferrerPolicyServerHttpHeadersWriter.ReferrerPolicy;
 import org.springframework.web.cors.reactive.CorsConfigurationSource;
-import reactor.core.publisher.Mono;
 
 /**
  * Edge security: answer CORS before authorisation, write the security headers and error bodies, validate the JWT
@@ -37,15 +28,19 @@ import reactor.core.publisher.Mono;
 @EnableConfigurationProperties({GatewayProperties.class, SecurityProperties.class})
 public class SecurityConfig {
 
+    private final GatewayProperties gateway;
+
+    public SecurityConfig(GatewayProperties gateway) {
+        this.gateway = gateway;
+    }
+
     @Bean
     SecurityWebFilterChain securityWebFilterChain(
             ServerHttpSecurity http,
-            GatewayProperties gateway,
-            SecurityProperties security,
             ReactiveJwtDecoder jwtDecoder,
             CorsConfigurationSource cors,
-            ObjectMapper objectMapper,
-            @Qualifier("errorMessages") MessageSource errorMessages) {
+            ProblemAuthenticationHandlers problems,
+            InternalKeyAuthorization internalKey) {
 
         http
                 .csrf(ServerHttpSecurity.CsrfSpec::disable)
@@ -53,16 +48,32 @@ public class SecurityConfig {
                 .formLogin(ServerHttpSecurity.FormLoginSpec::disable)
                 .logout(ServerHttpSecurity.LogoutSpec::disable)
                 .cors(c -> c.configurationSource(cors));
-        writeHeaders(http, gateway.docsEnabled());
-        writeProblemErrors(http, objectMapper, errorMessages);
+        writeHeaders(http);
+        http.exceptionHandling(e -> e
+                .authenticationEntryPoint(problems.entryPoint())
+                .accessDeniedHandler(problems.accessDeniedHandler()));
         http.oauth2ResourceServer(o -> o
                 .bearerTokenConverter(new SseTokenBearerConverter(gateway))
                 .jwt(j -> j.jwtDecoder(jwtDecoder).jwtAuthenticationConverter(ParkviewJwtConverter.create())));
+        authorizeExchanges(http, internalKey);
+        return http.build();
+    }
 
+    private void writeHeaders(ServerHttpSecurity http) {
+        String csp = gateway.docsEnabled()
+                ? "default-src 'self' 'unsafe-inline' data:"
+                : "default-src 'none'; frame-ancestors 'none'";
+        http.headers(h -> h
+                .contentSecurityPolicy(p -> p.policyDirectives(csp))
+                .referrerPolicy(r -> r.policy(ReferrerPolicy.NO_REFERRER))
+                .permissionsPolicy(p -> p.policy("camera=(), microphone=(), geolocation=()")));
+    }
+
+    private void authorizeExchanges(ServerHttpSecurity http, InternalKeyAuthorization internalKey) {
         http.authorizeExchange(ex -> {
             ex.pathMatchers(HttpMethod.OPTIONS, "/**").permitAll();
             ex.pathMatchers("/actuator/health", "/actuator/health/**", "/actuator/info").permitAll();
-            ex.pathMatchers("/actuator/prometheus").access(internalKey(security));
+            ex.pathMatchers("/actuator/prometheus").access(internalKey);
             ex.pathMatchers("/actuator/**").denyAll();
 
             if (gateway.docsEnabled()) {
@@ -74,36 +85,5 @@ public class SecurityConfig {
             // exists for it or not. "Any valid token" is an explicit `access: AUTHENTICATED` rule, never the fallthrough.
             ex.anyExchange().denyAll();
         });
-        return http.build();
-    }
-
-    private static void writeHeaders(ServerHttpSecurity http, boolean docsEnabled) {
-        String csp = docsEnabled
-                ? "default-src 'self' 'unsafe-inline' data:"
-                : "default-src 'none'; frame-ancestors 'none'";
-        http.headers(h -> h
-                .contentSecurityPolicy(p -> p.policyDirectives(csp))
-                .referrerPolicy(r -> r.policy(ReferrerPolicy.NO_REFERRER))
-                .permissionsPolicy(p -> p.policy("camera=(), microphone=(), geolocation=()")));
-    }
-
-    /** 401 and 403 in the language of the caller ({@code Accept-Language}); the codes are {@code error.unauthorized} and {@code error.forbidden}. */
-    private static void writeProblemErrors(ServerHttpSecurity http, ObjectMapper objectMapper, MessageSource messages) {
-        http.exceptionHandling(e -> e
-                .authenticationEntryPoint((exchange, ex) -> ProblemResponses.writeLocalized(
-                        exchange, objectMapper, messages, HttpStatus.UNAUTHORIZED,
-                        "title.unauthorized", "Unauthorized", "error.unauthorized", "Authentication is required"))
-                .accessDeniedHandler((exchange, ex) -> ProblemResponses.writeLocalized(
-                        exchange, objectMapper, messages, HttpStatus.FORBIDDEN,
-                        "title.forbidden", "Forbidden", "error.forbidden", "You are not allowed to perform this action")));
-    }
-
-    /** Metrics are for the platform only: callers must present the internal API key (compared in constant time, an unset key never matches). */
-    private static ReactiveAuthorizationManager<AuthorizationContext> internalKey(SecurityProperties security) {
-        InternalApiKeys keys = new InternalApiKeys(security.internalApiKey(), null, null);
-        return (Mono<Authentication> authentication, AuthorizationContext context) -> {
-            String presented = context.getExchange().getRequest().getHeaders().getFirst(InternalApiKeys.HEADER);
-            return Mono.just(new AuthorizationDecision(keys.check(presented) != InternalApiKeys.Result.NONE));
-        };
     }
 }

@@ -477,11 +477,13 @@ class GatewayRoutingTest {
         RecordedRequest fines = upstreamRequest();
         assertThat(fines.getPath()).isEqualTo("/api/v1/fines/plate/ABC123");
         assertThat(fines.getHeader("X-User-Id")).isEqualTo("d-1");
-        client.get().uri("/api/v1/users/me").header("Authorization", "Bearer " + validToken("driver", "d-1"))
+        client.get().uri("/api/v1/users/me/profile").header("Authorization", "Bearer " + validToken("driver", "d-1"))
                 .exchange().expectStatus().isOk();
-        assertThat(upstreamRequest().getPath()).isEqualTo("/api/v1/users/me");
+        assertThat(upstreamRequest().getPath()).isEqualTo("/api/v1/users/me/profile");
         client.get().uri("/api/v1/fines/f1").exchange().expectStatus().isUnauthorized();
-        client.get().uri("/api/v1/users/me").exchange().expectStatus().isUnauthorized();
+        client.get().uri("/api/v1/users/me/profile").exchange().expectStatus().isUnauthorized();
+        // a path that authentication-service does not serve is no longer let through by a prefix rule
+        client.get().uri("/api/v1/users/me").header("Authorization", "Bearer " + validToken("driver", "d-1")).exchange().expectStatus().isForbidden();
         assertThat(RECORDED.poll(300, TimeUnit.MILLISECONDS)).as("nothing reached upstream without a token").isNull();
     }
 

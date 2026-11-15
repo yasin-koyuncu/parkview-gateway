@@ -1,3 +1,23 @@
+# Named pieces of the routes below, used through YAML aliases (*name): each rate-limit tier, request size limit and the retry
+# policy is written once. Nothing reads this block itself. SnakeYAML refuses a file with more than 50 aliases (Spring Boot loads it
+# with that default); this file uses 32, so a route with a value of its own spells it out instead of getting an alias.
+route-templates:
+  # RequestRateLimiter: replenishRate (tokens per second) and burstCapacity. Spring Cloud Gateway keeps one Redis bucket per route and
+  # client key (route id, user or address), so a tier is a limit per route, not shared between routes.
+  rate-credentials: &rate-credentials { name: RequestRateLimiter, args: { redis-rate-limiter.replenishRate: 1, redis-rate-limiter.burstCapacity: 5 } }
+  rate-standard: &rate-standard { name: RequestRateLimiter, args: { redis-rate-limiter.replenishRate: 10, redis-rate-limiter.burstCapacity: 20 } }
+  rate-staff: &rate-staff { name: RequestRateLimiter, args: { redis-rate-limiter.replenishRate: 20, redis-rate-limiter.burstCapacity: 40 } }
+  rate-sessions: &rate-sessions { name: RequestRateLimiter, args: { redis-rate-limiter.replenishRate: 30, redis-rate-limiter.burstCapacity: 60 } }
+  rate-expensive: &rate-expensive { name: RequestRateLimiter, args: { redis-rate-limiter.replenishRate: 5, redis-rate-limiter.burstCapacity: 10 } }
+  # RequestSize: the largest body a route accepts (more is answered with 413)
+  body-16kb: &body-16kb { name: RequestSize, args: { maxSize: 16KB } }
+  body-64kb: &body-64kb { name: RequestSize, args: { maxSize: 64KB } }
+  body-256kb: &body-256kb { name: RequestSize, args: { maxSize: 256KB } }
+  body-1mb: &body-1mb { name: RequestSize, args: { maxSize: 1MB } }
+  body-12mb: &body-12mb { name: RequestSize, args: { maxSize: 12MB } }       # base64 snapshot
+  # GET only, twice, when a service answers 502, 503 or 504
+  retry-get: &retry-get { name: Retry, args: { retries: 2, methods: GET, statuses: "BAD_GATEWAY,SERVICE_UNAVAILABLE,GATEWAY_TIMEOUT", backoff: { firstBackoff: 50ms, maxBackoff: 500ms, factor: 2 } } }
+
 spring:
   application:
     name: api-gateway
@@ -20,103 +40,75 @@ spring:
             pool:
               max-idle-time: 30s
               max-life-time: 10m
+          # The uri of a route is the base URL of its service from parkview.gateway.services (below): the one place a URL and its
+          # default port are written.
           routes:
             # ── Authentication (public). Credential endpoints get a much stricter per-IP limit (brute force). ──
             - id: auth-sensitive
-              uri: ${AUTH_SERVICE_URL:http://localhost:8085}
+              uri: ${parkview.gateway.services.auth-service.url}
               predicates:
                 - Path=/api/v1/auth/login,/api/v1/auth/register,/api/v1/auth/reset-password
               filters:
-                - name: RequestSize
-                  args: { maxSize: 16KB }
-                - name: RequestRateLimiter
-                  args:
-                    redis-rate-limiter.replenishRate: 1
-                    redis-rate-limiter.burstCapacity: 5
+                - *body-16kb
+                - *rate-credentials
             - id: auth-service
-              uri: ${AUTH_SERVICE_URL:http://localhost:8085}
+              uri: ${parkview.gateway.services.auth-service.url}
               predicates:
                 - Path=/api/v1/auth/**
               filters:
-                - name: RequestSize
-                  args: { maxSize: 16KB }
-                - name: RequestRateLimiter
-                  args:
-                    redis-rate-limiter.replenishRate: 10
-                    redis-rate-limiter.burstCapacity: 20
+                - *body-16kb
+                - *rate-standard
 
             # ── Access management (roles, grants, audit) is owned by authentication-service ──
             - id: access-service
-              uri: ${AUTH_SERVICE_URL:http://localhost:8085}
+              uri: ${parkview.gateway.services.auth-service.url}
               predicates:
                 - Path=/api/v1/access/**
               filters:
-                - name: RequestSize
-                  args: { maxSize: 64KB }
-                - name: RequestRateLimiter
-                  args:
-                    redis-rate-limiter.replenishRate: 10
-                    redis-rate-limiter.burstCapacity: 20
+                - *body-64kb
+                - *rate-standard
 
             # ── Profile of the signed-in user (any role) is owned by authentication-service ──
             - id: user-profile
-              uri: ${AUTH_SERVICE_URL:http://localhost:8085}
+              uri: ${parkview.gateway.services.auth-service.url}
               predicates:
                 - Path=/api/v1/users/**
               filters:
-                - name: RequestSize
-                  args: { maxSize: 64KB }
-                - name: RequestRateLimiter
-                  args:
-                    redis-rate-limiter.replenishRate: 10
-                    redis-rate-limiter.burstCapacity: 20
+                - *body-64kb
+                - *rate-standard
 
             # ── Enforcement ──
             - id: rule-engine
-              uri: ${RULE_ENGINE_URL:http://localhost:8081}
+              uri: ${parkview.gateway.services.rule-engine.url}
               predicates:
                 - Path=/api/v1/violations/**,/api/v1/permits/**,/api/v1/fines/**,/api/v1/disputes/**
               filters:
-                - name: RequestSize
-                  args: { maxSize: 1MB }
-                - name: RequestRateLimiter
-                  args:
-                    redis-rate-limiter.replenishRate: 20
-                    redis-rate-limiter.burstCapacity: 40
-                - name: Retry
-                  args: { retries: 2, methods: GET, statuses: "BAD_GATEWAY,SERVICE_UNAVAILABLE,GATEWAY_TIMEOUT", backoff: { firstBackoff: 50ms, maxBackoff: 500ms, factor: 2 } }
+                - *body-1mb
+                - *rate-staff
+                - *retry-get
 
             - id: session-service
-              uri: ${SESSION_SERVICE_URL:http://localhost:8082}
+              uri: ${parkview.gateway.services.session-service.url}
               predicates:
                 - Path=/api/v1/sessions/**
               filters:
-                - name: RequestSize
-                  args: { maxSize: 1MB }
-                - name: RequestRateLimiter
-                  args:
-                    redis-rate-limiter.replenishRate: 30
-                    redis-rate-limiter.burstCapacity: 60
-                - name: Retry
-                  args: { retries: 2, methods: GET, statuses: "BAD_GATEWAY,SERVICE_UNAVAILABLE,GATEWAY_TIMEOUT", backoff: { firstBackoff: 50ms, maxBackoff: 500ms, factor: 2 } }
+                - *body-1mb
+                - *rate-sessions
+                - *retry-get
 
             - id: parking-mapping
-              uri: ${PARKING_MAPPING_URL:http://localhost:8083}
+              uri: ${parkview.gateway.services.parking-mapping.url}
               predicates:
                 - Path=/api/v1/mapping/**,/api/v1/zones/**,/api/v1/sites/**
               filters:
                 - name: RequestSize
                   args: { maxSize: 4MB }
-                - name: RequestRateLimiter
-                  args:
-                    redis-rate-limiter.replenishRate: 20
-                    redis-rate-limiter.burstCapacity: 40
-                - name: Retry
-                  args: { retries: 2, methods: GET, statuses: "BAD_GATEWAY,SERVICE_UNAVAILABLE,GATEWAY_TIMEOUT", backoff: { firstBackoff: 50ms, maxBackoff: 500ms, factor: 2 } }
+                - *rate-staff
+                - *retry-get
 
             # Server-sent events: long-lived, so no response timeout (negative disables it) and no limiter.
             - id: event-streaming
-              uri: ${EVENT_STREAMING_URL:http://localhost:8084}
+              uri: ${parkview.gateway.services.event-streaming.url}
               predicates:
                 - Path=/api/v1/events/**
               filters:
@@ -129,127 +121,95 @@ spring:
             # ── Calibration scan of a camera view -> ingestion-service. It moves a PTZ camera, takes a picture and has it analysed,
             # which takes seconds, so this path alone gets a 60 s response timeout (the default is 15 s). Declared before
             # ingestion-service: the first matching route wins. Not retried (it moves a camera), small bodies. The limiter is the
-            # same as for the other camera routes (the bucket is per user and shared by the routes; ingestion-service allows one scan per camera). ──
+            # same tier as for the other camera routes (its own bucket per user: ingestion-service allows one scan per camera). ──
             - id: ingestion-calibration-scan
-              uri: ${INGESTION_SERVICE_URL:http://localhost:9000}
+              uri: ${parkview.gateway.services.ingestion-service.url}
               predicates:
                 - Path=/api/v1/cameras/*/calibration/scan
                 - Method=POST
               filters:
                 - RewritePath=/api/v1/cameras(?<segment>.*), /cameras${segment}
-                - name: RequestSize
-                  args: { maxSize: 64KB }
-                - name: RequestRateLimiter
-                  args:
-                    redis-rate-limiter.replenishRate: 10
-                    redis-rate-limiter.burstCapacity: 20
+                - *body-64kb
+                - *rate-standard
               metadata:
                 response-timeout: 60000     # milliseconds
 
             # ── Cameras (device api key in the body, no JWT) -> ingestion-service ──
             - id: ingestion-service
-              uri: ${INGESTION_SERVICE_URL:http://localhost:9000}
+              uri: ${parkview.gateway.services.ingestion-service.url}
               predicates:
                 - Path=/api/v1/cameras/**
               filters:
                 # Path=/api/v1/cameras/** also matches the bare /api/v1/cameras (the camera list), so the rewrite keeps the optional
                 # slash inside the captured group: /api/v1/cameras -> /cameras, /api/v1/cameras/x/capture -> /cameras/x/capture
                 - RewritePath=/api/v1/cameras(?<segment>.*), /cameras${segment}
-                - name: RequestSize
-                  args: { maxSize: 12MB }       # base64 snapshot
-                - name: RequestRateLimiter
-                  args:
-                    redis-rate-limiter.replenishRate: 10
-                    redis-rate-limiter.burstCapacity: 20
+                - *body-12mb
+                - *rate-standard
 
             # ── Detections (AI detections awaiting review) are also owned by ingestion-service ──
             - id: ingestion-detections
-              uri: ${INGESTION_SERVICE_URL:http://localhost:9000}
+              uri: ${parkview.gateway.services.ingestion-service.url}
               predicates:
                 - Path=/api/v1/detections/**
               filters:
                 - RewritePath=/api/v1/detections(?<segment>.*), /detections${segment}    # bare /api/v1/detections -> /detections
-                - name: RequestSize
-                  args: { maxSize: 64KB }
-                - name: RequestRateLimiter
-                  args:
-                    redis-rate-limiter.replenishRate: 10
-                    redis-rate-limiter.burstCapacity: 20
+                - *body-64kb
+                - *rate-standard
 
             - id: file-service
-              uri: ${FILE_SERVICE_URL:http://localhost:8086}
+              uri: ${parkview.gateway.services.file-service.url}
               predicates:
                 - Path=/api/v1/files/**
               filters:
                 - name: RequestSize
                   args: { maxSize: 22MB }       # 20 MB image + multipart overhead
-                - name: RequestRateLimiter
-                  args:
-                    redis-rate-limiter.replenishRate: 10
-                    redis-rate-limiter.burstCapacity: 20
+                - *rate-standard
 
             - id: notification-service
-              uri: ${NOTIFICATION_SERVICE_URL:http://localhost:8087}
+              uri: ${parkview.gateway.services.notification-service.url}
               predicates:
                 - Path=/api/v1/notifications/**
               filters:
-                - name: RequestSize
-                  args: { maxSize: 64KB }
+                - *body-64kb
                 # POST /notifications/test-push sends a push on every call
-                - name: RequestRateLimiter
-                  args:
-                    redis-rate-limiter.replenishRate: 10
-                    redis-rate-limiter.burstCapacity: 20
+                - *rate-standard
 
             - id: lookup-service
-              uri: ${LOOKUP_SERVICE_URL:http://localhost:8089}
+              uri: ${parkview.gateway.services.lookup-service.url}
               predicates:
                 - Path=/api/v1/lookup/**
               filters:
-                - name: RequestSize
-                  args: { maxSize: 64KB }
-                - name: RequestRateLimiter
-                  args:
-                    redis-rate-limiter.replenishRate: 10
-                    redis-rate-limiter.burstCapacity: 20
+                - *body-64kb
+                - *rate-standard
 
             # the Stripe webhook is signature-authenticated and comes from a few addresses in bursts: no rate limit, before the route below
             - id: payment-webhook
-              uri: ${PAYMENT_SERVICE_URL:http://localhost:8088}
+              uri: ${parkview.gateway.services.payment-service.url}
               predicates:
                 - Path=/api/v1/payments/webhook
               filters:
-                - name: RequestSize
-                  args: { maxSize: 256KB }
+                - *body-256kb
 
             - id: payment-service
-              uri: ${PAYMENT_SERVICE_URL:http://localhost:8088}
+              uri: ${parkview.gateway.services.payment-service.url}
               predicates:
                 - Path=/api/v1/payments/**
               filters:
-                - name: RequestSize
-                  args: { maxSize: 256KB }
+                - *body-256kb
                 # a checkout makes calls to Stripe and to two services: a driver needs a few per minute, not a stream
-                - name: RequestRateLimiter
-                  args:
-                    redis-rate-limiter.replenishRate: 5
-                    redis-rate-limiter.burstCapacity: 10
+                - *rate-expensive
 
             # AI service is internal: operators reach it through the gateway, which adds the ai-detection key (AI_DETECTION_INTERNAL_API_KEY, never the gateway's own).
             - id: ai-service
-              uri: ${AI_SERVICE_URL:http://localhost:8000}
+              uri: ${parkview.gateway.services.ai-service.url}
               predicates:
                 - Path=/api/v1/ai/**
               filters:
                 - RewritePath=/api/v1/ai/(?<segment>.*), /${segment}
                 - RemoveRequestHeader=X-Internal-Api-Key
                 - AddRequestHeader=X-Internal-Api-Key, ${AI_DETECTION_INTERNAL_API_KEY:}
-                - name: RequestSize
-                  args: { maxSize: 12MB }
-                - name: RequestRateLimiter
-                  args:
-                    redis-rate-limiter.replenishRate: 5
-                    redis-rate-limiter.burstCapacity: 10
+                - *body-12mb
+                - *rate-expensive
 
 server:
   port: ${PORT:8080}
@@ -284,19 +244,10 @@ management:
 
 springdoc:
   api-docs:
-    enabled: ${DOCS_ENABLED:false}
+    enabled: ${parkview.gateway.docs-enabled}
   swagger-ui:
-    enabled: ${DOCS_ENABLED:false}
-    urls:
-      - { name: session-service, url: /docs/session-service/v3/api-docs }
-      - { name: rule-engine, url: /docs/rule-engine/v3/api-docs }
-      - { name: parking-mapping, url: /docs/parking-mapping/v3/api-docs }
-      - { name: payment-service, url: /docs/payment-service/v3/api-docs }
-      - { name: notification-service, url: /docs/notification-service/v3/api-docs }
-      - { name: lookup-service, url: /docs/lookup-service/v3/api-docs }
-      - { name: file-service, url: /docs/file-service/v3/api-docs }
-      - { name: auth-service, url: /docs/auth-service/v3/api-docs }
-      - { name: event-streaming, url: /docs/event-streaming/v3/api-docs }
+    enabled: ${parkview.gateway.docs-enabled}
+    # no `urls` here: the entries of the Swagger UI are generated from parkview.gateway.services (DocsRoutesConfig)
 
 logging:
   pattern:
@@ -323,16 +274,22 @@ parkview:
     # Only the SSE endpoints may carry the bearer token in ?token= (EventSource cannot send headers).
     sse-token-paths:
       - /api/v1/events/stream/**
+    # The downstream services: the one place a base URL (and its default port) is defined. The routes above refer to it
+    # (${parkview.gateway.services.<name>.url}); with DOCS_ENABLED the gateway also routes /docs/<name>/v3/api-docs to every service
+    # with docs: true and lists it in the Swagger UI. Adding a service: one line here, its route above, its rules below.
     services:
-      session-service: ${SESSION_SERVICE_URL:http://localhost:8082}
-      rule-engine: ${RULE_ENGINE_URL:http://localhost:8081}
-      parking-mapping: ${PARKING_MAPPING_URL:http://localhost:8083}
-      payment-service: ${PAYMENT_SERVICE_URL:http://localhost:8088}
-      notification-service: ${NOTIFICATION_SERVICE_URL:http://localhost:8087}
-      lookup-service: ${LOOKUP_SERVICE_URL:http://localhost:8089}
-      file-service: ${FILE_SERVICE_URL:http://localhost:8086}
-      auth-service: ${AUTH_SERVICE_URL:http://localhost:8085}
-      event-streaming: ${EVENT_STREAMING_URL:http://localhost:8084}
+      session-service: { url: "${SESSION_SERVICE_URL:http://localhost:8082}" }
+      rule-engine: { url: "${RULE_ENGINE_URL:http://localhost:8081}" }
+      parking-mapping: { url: "${PARKING_MAPPING_URL:http://localhost:8083}" }
+      payment-service: { url: "${PAYMENT_SERVICE_URL:http://localhost:8088}" }
+      notification-service: { url: "${NOTIFICATION_SERVICE_URL:http://localhost:8087}" }
+      lookup-service: { url: "${LOOKUP_SERVICE_URL:http://localhost:8089}" }
+      file-service: { url: "${FILE_SERVICE_URL:http://localhost:8086}" }
+      auth-service: { url: "${AUTH_SERVICE_URL:http://localhost:8085}" }
+      event-streaming: { url: "${EVENT_STREAMING_URL:http://localhost:8084}" }
+      # no aggregated API docs for these two
+      ingestion-service: { url: "${INGESTION_SERVICE_URL:http://localhost:9000}", docs: false }
+      ai-service: { url: "${AI_SERVICE_URL:http://localhost:8000}", docs: false }
 
     # Declarative edge authorisation: first match wins and anything unmatched is DENIED (SecurityConfig ends with denyAll: 401 without a
     # token, problem+json 403 with one). A path is open to every signed-in user only through an explicit `access: AUTHENTICATED` rule below
@@ -340,83 +297,98 @@ parkview:
     # endpoint therefore needs a rule here before the frontend can call it. /internal/** has no route and no rule, and must never get one.
     # The services re-check roles AND object ownership (sites, plate ownership) themselves. Scope is by site (ADR 0009 of smart-parking-e2e): every
     # zone route has a site twin with exactly the same permission; zone ids stay valid (a zone created before sites has a site of its id).
+    #
+    # How a rule says what it needs (see GatewayProperties.Rule):
+    #   access: PUBLIC | AUTHENTICATED         no token / any valid token
+    #   permission: "x:y"                      one permission (access: PERMISSION is implied); with `methods` for those only
+    #   read: "x:y", write: "x:z"              reads (GET, HEAD) and writes (POST, PUT, PATCH, DELETE) of the same paths with their own
+    #                                          permission each: the two sets never overlap, so such a pair needs no particular order
+    # `*` is one path segment, `/x/**` is x and everything below it. Rules of different paths still go most specific first.
+    # No prefix catch-all for all methods: every endpoint of the services under the prefixes below is listed (fines, users, notifications,
+    # auth), so a method or path a service does not serve is denied here.
     rules:
-      # public: login/refresh flows, Stripe webhook (signature-authenticated), device endpoints (api key), KPI counter
-      - { paths: ["/api/v1/auth/**"], access: PUBLIC }
+      # public: the sign-in flows of authentication-service (POST; GET locales; `me` and `logout` need a token, which the service checks and
+      # answers 401 for, so they are PUBLIC here), Stripe webhook (signature-authenticated), device endpoints (api key), KPI counter
+      - { paths: ["/api/v1/auth/locales", "/api/v1/auth/me"], methods: [GET, HEAD], access: PUBLIC }
+      - { paths: ["/api/v1/auth/login", "/api/v1/auth/register", "/api/v1/auth/refresh", "/api/v1/auth/reset-password",
+                  "/api/v1/auth/oauth/authorize", "/api/v1/auth/oauth/token", "/api/v1/auth/logout"], methods: [POST], access: PUBLIC }
       - { paths: ["/api/v1/payments/webhook"], methods: [POST], access: PUBLIC }
       - { paths: ["/api/v1/cameras/ingest", "/api/v1/cameras/heartbeat"], methods: [POST], access: PUBLIC }
       - { paths: ["/api/v1/sessions/count/active"], methods: [GET], access: PUBLIC }
       # access management: any signed-in user may read their own effective access, the rest is permission-gated
       - { paths: ["/api/v1/access/me/**"], methods: [GET], access: AUTHENTICATED }
-      - { paths: ["/api/v1/access/**"], methods: [GET, HEAD], access: PERMISSION, permission: "access:read" }
       # roles (ADR 0016): defining roles and their permissions is its own permission, so the right to hand out roles (access:manage, below)
-      # is not the right to create one. Reads of roles stay under access:read above.
-      - { paths: ["/api/v1/access/roles", "/api/v1/access/roles/**"], access: PERMISSION, permission: "role:manage" }     # every other method
-      # assigning roles and sites to a user (PUT /access/users/*/roles, /sites) and anything else under /access: access:manage
-      - { paths: ["/api/v1/access/**"], access: PERMISSION, permission: "access:manage" }     # every other method
-      # fines (drivers read their own, staff by site/zone/plate) and the profile of the signed-in user (the service uses the token
-      # subject): any valid token here (explicit AUTHENTICATED rules), the services decide on ownership and sites
-      # staff corrections of fines (ADR 0002): first, so the catch-all below does not capture them
-      - { paths: ["/api/v1/fines/*/void", "/api/v1/fines/*/mark-paid"], methods: [POST], access: PERMISSION, permission: "fine:manage" }
-      - { paths: ["/api/v1/fines/*/history"], methods: [GET], access: PERMISSION, permission: "violation:read" }
+      # is not the right to create one. Reads of roles stay under access:read.
+      - { paths: ["/api/v1/access/roles", "/api/v1/access/roles/**"], read: "access:read", write: "role:manage" }
+      # assigning roles and sites to a user (PUT /access/users/*/roles, /sites) and anything else under /access that writes: access:manage
+      - { paths: ["/api/v1/access/**"], read: "access:read", write: "access:manage" }
+      # fines (drivers read their own, staff by site/zone/plate): the services use the token subject and decide on ownership and sites
+      # staff corrections of fines (ADR 0002)
+      - { paths: ["/api/v1/fines/*/void", "/api/v1/fines/*/mark-paid"], methods: [POST], permission: "fine:manage" }
+      - { paths: ["/api/v1/fines/*/history"], methods: [GET], permission: "violation:read" }
       # evidence (with the camera snapshots) is for staff; the explanation and the disputes of a fine are for the driver who owns the plate and for staff:
       # any valid token, rule-service decides on ownership and sites (404 for what the caller may not see)
-      - { paths: ["/api/v1/fines/*/evidence"], methods: [GET], access: PERMISSION, permission: "violation:read" }
-      - { paths: ["/api/v1/fines/*/explanation"], methods: [GET], access: AUTHENTICATED }
-      - { paths: ["/api/v1/fines/*/dispute"], methods: [GET, POST], access: AUTHENTICATED }
+      - { paths: ["/api/v1/fines/*/evidence"], methods: [GET], permission: "violation:read" }
+      - { paths: ["/api/v1/fines/*/explanation"], methods: [GET, HEAD], access: AUTHENTICATED }
+      - { paths: ["/api/v1/fines/*/dispute"], methods: [GET, HEAD, POST], access: AUTHENTICATED }
       - { paths: ["/api/v1/disputes/*/withdraw"], methods: [POST], access: AUTHENTICATED }
       # the review queue and a dispute (reads): fine:read; the decision and everything else that changes a dispute: fine:manage
-      # (rule-service also limits both to the operator's sites, which it looks up). Reads first: the manage rule takes every other method.
-      - { paths: ["/api/v1/disputes", "/api/v1/disputes/**"], methods: [GET, HEAD], access: PERMISSION, permission: "fine:read" }
-      - { paths: ["/api/v1/disputes", "/api/v1/disputes/**"], access: PERMISSION, permission: "fine:manage" }
-      - { paths: ["/api/v1/fines/**"], access: AUTHENTICATED }
-      - { paths: ["/api/v1/users/**"], access: AUTHENTICATED }     # incl. GET/POST /users/me/plates and DELETE /users/me/plates/*
+      # (rule-service also limits both to the operator's sites, which it looks up)
+      - { paths: ["/api/v1/disputes", "/api/v1/disputes/**"], read: "fine:read", write: "fine:manage" }
+      # the other endpoints of rule-service under /fines, all reads (plates, a site, a zone, one fine): any valid token, the service decides
+      - { paths: ["/api/v1/fines/plate/*", "/api/v1/fines/site/*", "/api/v1/fines/zone/*", "/api/v1/fines/*"], methods: [GET, HEAD], access: AUTHENTICATED }
+      # the profile and the plates of the signed-in user (the service uses the token subject): any valid token
+      - { paths: ["/api/v1/users/me/plates", "/api/v1/users/me/profile"], methods: [GET, HEAD], access: AUTHENTICATED }
+      - { paths: ["/api/v1/users/me/plates"], methods: [POST], access: AUTHENTICATED }
+      - { paths: ["/api/v1/users/me/plates/*"], methods: [DELETE], access: AUTHENTICATED }
+      - { paths: ["/api/v1/users/me/profile"], methods: [PUT], access: AUTHENTICATED }
       # payments: a driver pays their own fine or session (checkout), reads their own history; GET /payments/review is admin-only in the
       # service (hasRole ADMIN). The webhook is PUBLIC above. Anything else under /payments is denied.
       - { paths: ["/api/v1/payments/fines/*/checkout", "/api/v1/payments/sessions/*/checkout"], methods: [POST], access: AUTHENTICATED }
       - { paths: ["/api/v1/payments/history", "/api/v1/payments/review"], methods: [GET], access: AUTHENTICATED }
       # notifications of the signed-in user (list, read, read-all, push-subscription, test-push): the service scopes everything to the token subject
-      - { paths: ["/api/v1/notifications/**"], access: AUTHENTICATED }
+      - { paths: ["/api/v1/notifications"], methods: [GET, HEAD], access: AUTHENTICATED }
+      - { paths: ["/api/v1/notifications/*/read"], methods: [PATCH], access: AUTHENTICATED }
+      - { paths: ["/api/v1/notifications/read-all", "/api/v1/notifications/test-push"], methods: [POST], access: AUTHENTICATED }
+      - { paths: ["/api/v1/notifications/push-subscription"], methods: [PUT, DELETE], access: AUTHENTICATED }
       # operator functions: one permission each (ADR 0002). A token without a permissions claim holds none of them.
-      - { paths: ["/api/v1/ai/**"], access: PERMISSION, permission: "ai:use" }
+      - { paths: ["/api/v1/ai/**"], permission: "ai:use" }
       # the signed URL of a stored detection or fine image is a read (camera:read); everything else under cameras/admin (rotate-key, ...) is camera:admin
-      - { paths: ["/api/v1/cameras/admin/**"], methods: [GET, HEAD], access: PERMISSION, permission: "camera:read" }
-      - { paths: ["/api/v1/cameras/admin/**"], access: PERMISSION, permission: "camera:admin" }
+      - { paths: ["/api/v1/cameras/admin/**"], read: "camera:read", write: "camera:admin" }
       # camera list: ingestion-service wants camera:read OR stream:operator with site scope, which one gateway permission cannot say: the service decides.
       # Exact path only (the PUBLIC device rules above and the admin rule stay first; `*` is one segment, so none of these capture each other)
       - { paths: ["/api/v1/cameras"], methods: [GET], access: AUTHENTICATED }
       # status of one RTSP camera: camera:read or stream:operator plus site scope, again the service decides (after the admin rule: a camera id `admin` has none)
       - { paths: ["/api/v1/cameras/*"], methods: [GET], access: AUTHENTICATED }
-      - { paths: ["/api/v1/cameras/*/capture"], methods: [POST], access: PERMISSION, permission: "ai:use" }
+      - { paths: ["/api/v1/cameras/*/capture"], methods: [POST], permission: "ai:use" }
       # scanning a view needs camera:admin AND ai:use: a rule names one permission, so the edge asks for camera:admin and ingestion-service
       # checks both. PTZ presets of a camera: camera:admin. (`*` is one segment; a camera id `admin` stays under the admin rule above.)
-      - { paths: ["/api/v1/cameras/*/calibration/scan"], methods: [POST], access: PERMISSION, permission: "camera:admin" }
-      - { paths: ["/api/v1/cameras/*/ptz/presets"], methods: [GET], access: PERMISSION, permission: "camera:admin" }
+      - { paths: ["/api/v1/cameras/*/calibration/scan"], methods: [POST], permission: "camera:admin" }
+      - { paths: ["/api/v1/cameras/*/ptz/presets"], methods: [GET], permission: "camera:admin" }
       # AI detections awaiting review (ingestion-service): reads need violation:read, the review decision violation:resolve
-      - { paths: ["/api/v1/detections/*/review"], methods: [PATCH], access: PERMISSION, permission: "violation:resolve" }
-      - { paths: ["/api/v1/detections", "/api/v1/detections/**"], methods: [GET, HEAD], access: PERMISSION, permission: "violation:read" }
-      - { paths: ["/api/v1/lookup/**"], access: PERMISSION, permission: "lookup:vehicle" }
-      # permits: reads (list, one permit) permit:read, grant and revoke permit:manage (every other method)
-      - { paths: ["/api/v1/permits", "/api/v1/permits/**"], methods: [GET, HEAD], access: PERMISSION, permission: "permit:read" }
-      - { paths: ["/api/v1/permits", "/api/v1/permits/**"], access: PERMISSION, permission: "permit:manage" }
-      - { paths: ["/api/v1/sessions/zone/**", "/api/v1/sessions/site/**"], access: PERMISSION, permission: "session:read" }
-      - { paths: ["/api/v1/sessions/start"], access: PERMISSION, permission: "session:manage" }
-      - { paths: ["/api/v1/sessions/*/pay"], methods: [PATCH], access: PERMISSION, permission: "session:manage" }
+      - { paths: ["/api/v1/detections/*/review"], methods: [PATCH], permission: "violation:resolve" }
+      - { paths: ["/api/v1/detections", "/api/v1/detections/**"], read: "violation:read" }
+      - { paths: ["/api/v1/lookup/**"], permission: "lookup:vehicle" }
+      # permits: reads (list, one permit) permit:read, grant and revoke permit:manage
+      - { paths: ["/api/v1/permits", "/api/v1/permits/**"], read: "permit:read", write: "permit:manage" }
+      - { paths: ["/api/v1/sessions/zone/**", "/api/v1/sessions/site/**"], permission: "session:read" }
+      - { paths: ["/api/v1/sessions/start"], permission: "session:manage" }
+      - { paths: ["/api/v1/sessions/*/pay"], methods: [PATCH], permission: "session:manage" }
       # session search and history are reads (a single segment under /sessions would otherwise be an id); corrections need their own permission.
       # PATCH /sessions/* is one path segment, so it never captures PATCH /sessions/*/pay above.
-      - { paths: ["/api/v1/sessions/search", "/api/v1/sessions/*/history"], methods: [GET], access: PERMISSION, permission: "session:read" }
+      - { paths: ["/api/v1/sessions/search", "/api/v1/sessions/*/history"], methods: [GET], permission: "session:read" }
       # the events of one session (ADR 0008 and the session README): the owner of the plate or staff with session:read in the site, decided by the service
       - { paths: ["/api/v1/sessions/*/events"], methods: [GET], access: AUTHENTICATED }
       # a driver's sessions of their own plates and one session by id: any valid token, session-service decides on ownership and sites.
       # After search and history above (`*` is one segment, so `/sessions/search` would otherwise be an id).
       - { paths: ["/api/v1/sessions/plate/*", "/api/v1/sessions/*"], methods: [GET], access: AUTHENTICATED }
-      - { paths: ["/api/v1/sessions/*/end", "/api/v1/sessions/*/void"], methods: [POST], access: PERMISSION, permission: "session:correct" }
-      - { paths: ["/api/v1/sessions/*"], methods: [PATCH], access: PERMISSION, permission: "session:correct" }
-      - { paths: ["/api/v1/violations/zone/**", "/api/v1/violations/site/**"], access: PERMISSION, permission: "violation:read" }
-      - { paths: ["/api/v1/violations/*/resolve"], access: PERMISSION, permission: "violation:resolve" }
+      - { paths: ["/api/v1/sessions/*/end", "/api/v1/sessions/*/void"], methods: [POST], permission: "session:correct" }
+      - { paths: ["/api/v1/sessions/*"], methods: [PATCH], permission: "session:correct" }
+      - { paths: ["/api/v1/violations/zone/**", "/api/v1/violations/site/**"], permission: "violation:read" }
+      - { paths: ["/api/v1/violations/*/resolve"], permission: "violation:resolve" }
       # violations of a plate: a driver for their own plates, staff with violation:read (the service decides which)
       - { paths: ["/api/v1/violations/plate/*"], methods: [GET], access: AUTHENTICATED }
-      - { paths: ["/api/v1/events/status", "/api/v1/events/stream/operator"], access: PERMISSION, permission: "stream:operator" }
+      - { paths: ["/api/v1/events/status", "/api/v1/events/stream/operator"], permission: "stream:operator" }
       # the driver stream: any valid token, event-streaming checks that the plates asked for are the driver's own
       - { paths: ["/api/v1/events/stream/driver"], methods: [GET], access: AUTHENTICATED }
       # two audiences (ADR 0017): the public catalogue (zones, sites, their spots, geojson and rules under /zones, /sites and the /mapping twins
@@ -425,28 +397,27 @@ parkview:
       # /mapping/sites/*/spots, /areas, /rules ... below. spot:read: map history, areas and camera views.
       # The overlap check (POST /zones/check-overlap) accepts zone:read, spot:read, zone:write or spot:write: the service decides.
       # Map versions are per site (ADR 0009); the site routes are listed under /mapping/sites and, should mapping-service serve them under /sites, there too.
-      - { paths: ["/api/v1/mapping/sites", "/api/v1/mapping/sites/*", "/api/v1/mapping/zones", "/api/v1/mapping/zones/*"],
-          methods: [GET, HEAD], access: PERMISSION, permission: "zone:read" }
+      - { paths: ["/api/v1/mapping/sites", "/api/v1/mapping/sites/*", "/api/v1/mapping/zones", "/api/v1/mapping/zones/*"], read: "zone:read" }
       - { paths: ["/api/v1/mapping/zones/*/versions", "/api/v1/mapping/zones/*/changes", "/api/v1/mapping/spots/*/changes",
                   "/api/v1/mapping/sites/*/versions", "/api/v1/mapping/sites/*/changes", "/api/v1/sites/*/versions", "/api/v1/sites/*/changes"],
-          methods: [GET, HEAD], access: PERMISSION, permission: "spot:read" }
+          read: "spot:read" }
       # parking areas and camera views (with their pictures and calibration) are for staff: reads need spot:read, their writes fall under the
       # spot:write rule for /mapping/** below
       - { paths: ["/api/v1/mapping/areas", "/api/v1/mapping/areas/**", "/api/v1/mapping/views/**", "/api/v1/mapping/cameras/*/views",
-                  "/api/v1/mapping/sites/*/areas", "/api/v1/sites/*/areas"], methods: [GET, HEAD], access: PERMISSION, permission: "spot:read" }
+                  "/api/v1/mapping/sites/*/areas", "/api/v1/sites/*/areas"], read: "spot:read" }
       # site rules (zone_rules with zone_id null, ADR 0009) are written like zone rules (POST/PUT/DELETE /zones/{zoneId}/rules/**: zone:write).
       # Before the spot:write catch-all of /mapping/**; under /sites/** the zone:write rule at the end covers them. Reads of the rules of a zone or
       # a site are open to every signed-in user (they are the information on the parking sign; see the AUTHENTICATED list below).
-      - { paths: ["/api/v1/mapping/sites/*/rules", "/api/v1/mapping/sites/*/rules/**"], methods: [POST, PUT, PATCH, DELETE], access: PERMISSION, permission: "zone:write" }
+      - { paths: ["/api/v1/mapping/sites/*/rules", "/api/v1/mapping/sites/*/rules/**"], write: "zone:write" }
       # spots, areas, calibration imports and rollback of a site are map edits like those of a zone (/mapping/zones/{zoneId}/...: spot:write).
       # Under /mapping/** the catch-all below says so; under /sites/** they must come before the zone:write rule of the site itself.
-      - { paths: ["/api/v1/sites/*/spots", "/api/v1/sites/*/areas", "/api/v1/sites/*/rollback", "/api/v1/sites/*/import/**"], methods: [POST, PUT, PATCH, DELETE], access: PERMISSION, permission: "spot:write" }
+      - { paths: ["/api/v1/sites/*/spots", "/api/v1/sites/*/areas", "/api/v1/sites/*/rollback", "/api/v1/sites/*/import/**"], write: "spot:write" }
       # files: uploads and snapshot reads are permission-gated; GET /files/evidence/*/url is only AUTHENTICATED, the owner of a fine (a driver)
       # needs it (the service wants file:view of staff and ownership of drivers)
-      - { paths: ["/api/v1/files/evidence/*", "/api/v1/files/snapshots/*"], methods: [POST], access: PERMISSION, permission: "file:upload" }
-      - { paths: ["/api/v1/files/snapshots/**"], methods: [GET, HEAD], access: PERMISSION, permission: "file:view" }
+      - { paths: ["/api/v1/files/evidence/*", "/api/v1/files/snapshots/*"], methods: [POST], permission: "file:upload" }
+      - { paths: ["/api/v1/files/snapshots/**"], read: "file:view" }
       - { paths: ["/api/v1/files/evidence/*/url"], methods: [GET], access: AUTHENTICATED }
-      - { paths: ["/api/v1/mapping/**"], methods: [POST, PUT, PATCH, DELETE], access: PERMISSION, permission: "spot:write" }
+      - { paths: ["/api/v1/mapping/**"], write: "spot:write" }
       # what drivers read on the map (zones, sites, their spots, geojson and the rules of a zone or a site, no permission and no site scope): any
       # valid token, an explicit list instead of a catch-all.
       # Listed after the staff reads above (versions, changes, areas, views), which need spot:read. Other GETs under /mapping, /zones and /sites are denied.
@@ -458,7 +429,7 @@ parkview:
       # the overlap check is a read in disguise: the service accepts zone:read, spot:read, zone:write or spot:write (a single gateway permission cannot say "any of")
       - { paths: ["/api/v1/zones/check-overlap"], methods: [POST], access: AUTHENTICATED }
       # zone geometry drives billing: its own permission (admin only by default)
-      - { paths: ["/api/v1/zones", "/api/v1/zones/**"], methods: [POST, PUT, PATCH, DELETE], access: PERMISSION, permission: "zone:write" }
+      - { paths: ["/api/v1/zones", "/api/v1/zones/**"], write: "zone:write" }
       # a site is the place a zone sits in (ADR 0009): created and changed with the same permission as zones, its tariff and site rules too
-      - { paths: ["/api/v1/sites", "/api/v1/sites/**"], methods: [POST, PUT, PATCH, DELETE], access: PERMISSION, permission: "zone:write" }
+      - { paths: ["/api/v1/sites", "/api/v1/sites/**"], write: "zone:write" }
       # nothing else: SecurityConfig denies every request no rule above matched

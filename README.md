@@ -18,10 +18,12 @@ unauthorised traffic away from them and gives every error the same shape.
 
 Code layout (`com.parkview.gateway`):
 
-* `config`: `SecurityConfig` (chain: CORS, headers, problem+json errors, actuator rules), `JwtDecoderConfig` (ES256/JWKS decoder with issuer and audience), `CorsConfig`, `RedisConfig`, `DocsRoutesConfig` and the `@ConfigurationProperties` records.
-* `security`: `RuleAuthorizer` (applies `parkview.gateway.rules`), `AudienceValidator`, `ParkviewJwtConverter` (claims to authorities, parsed with `Role` and `PermissionClaims` of parkview-security-core), `Permissions` (catalogue), `SseTokenPaths` + `SseTokenBearerConverter` (`?token=` on SSE paths), `RoleHeader` (value of `X-User-Role`).
+* `config`: `SecurityConfig` (chain: CORS, headers, actuator rules; the 401/403 writers and the key check of `/actuator/prometheus` are injected), `JwtDecoderConfig` (ES256/JWKS decoder with issuer and audience), `CorsConfig`, `RedisConfig` (the rate-limit key), `DocsRoutesConfig` (docs routes and Swagger UI entries, both generated from `parkview.gateway.services`) and the `@ConfigurationProperties` records.
+* `security`: `RuleAuthorizer` (applies `parkview.gateway.rules`), `InternalKeyAuthorization` (the internal key of `/actuator/prometheus`), `AudienceValidator`, `ParkviewJwtConverter` (claims to authorities, parsed with `Role` and `PermissionClaims` of parkview-security-core), `Permissions` (catalogue), `SseTokenPaths` + `SseTokenBearerConverter` (`?token=` on SSE paths), `RoleHeader` (value of `X-User-Role`).
 * `filter`: global route filters (`SseTokenForwardFilter` -2, `AuthForwardFilter` -1, `AccessLogFilter`).
-* `web`: edge headers, error handler, problem+json writer.
+* `web`: edge headers (`EdgeHeadersWebFilter`, `PlatformHeaders`: the platform-only header names, set and stripped from the same constants), error handler, `ProblemWriter` (problem+json writer bean), `GatewayProblem` (keys and English texts of one error), `ProblemAuthenticationHandlers` (401 and 403 of the chain).
+
+`application.yml` defines every downstream URL once, under `parkview.gateway.services` (name, `url`, `docs`); a route's `uri` is `${parkview.gateway.services.<name>.url}`. The rate-limit tiers, the request size limits and the retry policy are written once in the `route-templates` block at the top of the file and used with YAML aliases (`- *rate-standard`); SnakeYAML allows 50 aliases per file (32 are used), so a route with a value of its own spells it out. Spring Cloud Gateway keeps one Redis bucket per route and client key, so a tier is a limit per route.
 
 ## Routing table
 
@@ -29,7 +31,7 @@ Code layout (`com.parkview.gateway`):
 |---|---|---|
 | `/api/v1/auth/**` | authentication-service | `login`, `register`, `reset-password`: 1 req/s per IP (burst 5), 16 KB bodies |
 | `/api/v1/access/**` | authentication-service | roles, grants and audit log (ADR 0002); `access:read` for reads, `role:manage` to create, change or delete a role (`/access/roles/**`), `access:manage` for everything else that writes (roles and sites of a user, and `POST /access/users/invite` to invite a new operator), `GET /access/me/**` for any signed-in user |
-| `/api/v1/users/**` | authentication-service | profile of the signed-in user (any role, the service uses the token subject) |
+| `/api/v1/users/**` | authentication-service | plates and profile of the signed-in user (`GET`/`POST users/me/plates`, `DELETE users/me/plates/*`, `GET`/`PUT users/me/profile`; any role, the service uses the token subject) |
 | `/api/v1/violations/**`, `/api/v1/permits/**`, `/api/v1/fines/**`, `/api/v1/disputes/**` | rule-service | fines: any signed-in user, the service decides on ownership and sites; `GET fines/*/evidence` `violation:read`; disputes: `POST fines/*/dispute`, `GET fines/*/dispute`, `GET fines/*/explanation` and `POST disputes/*/withdraw` any signed-in user (the service decides on ownership), reads of the review queue and of a dispute (`GET`/`HEAD` `/disputes`, `/disputes/**`) `fine:read`, the decision and every other change (`POST disputes/*/decision`) `fine:manage`; permits: `GET`/`HEAD` `permit:read`, grant and revoke `permit:manage` |
 | `/api/v1/sessions/**` | session-service | `count/active` public, the rest see the rules below |
 | `/api/v1/mapping/**`, `/api/v1/zones/**`, `/api/v1/sites/**` | parking-mapping-service | spot writes: `spot:write`, zone and site writes: `zone:write`, management reads of sites and zones (`GET`/`HEAD` `mapping/sites`, `mapping/sites/*`, `mapping/zones`, `mapping/zones/*`; ADR 0017): `zone:read`, map history (`zones/*/versions`, `zones/*/changes`, `sites/*/versions`, `sites/*/changes`, `spots/*/changes`): `spot:read`; parking areas and camera views (`GET mapping/areas/**`, `GET mapping/sites/*/areas`, `GET mapping/views/**`, `GET mapping/cameras/*/views`): `spot:read`, their writes (every non-GET method under `mapping/**`) `spot:write`; rules of a zone or a site: writes (`POST`/`PUT`/`PATCH`/`DELETE` on `zones/*/rules/**`, `mapping/sites/*/rules/**`, `sites/*/rules/**`) `zone:write`, reads (`GET zones/*/rules`, `GET sites/*/rules`) any signed-in user (the rules are the information on the parking sign); site spots, areas, imports and rollback under `sites/*` `spot:write` like their zone twins (ADR 0009) |
@@ -54,9 +56,11 @@ Declared in `application.yml` under `parkview.gateway.rules` (first match wins, 
 |---|---|
 | `PUBLIC` | no token needed |
 | `AUTHENTICATED` | any valid token |
-| `PERMISSION` | the token holds the authority named in the rule's `permission` field (e.g. `permission: "zone:write"`) |
+| `PERMISSION` | the token holds the authority named in the rule's `permission` field (e.g. `permission: "zone:write"`); `permission:` alone implies `access: PERMISSION`, which can still be written out |
 | `OPERATOR` | `app_metadata.role` = operator or admin (kept for rules that really mean "a role"; no shipped rule uses it) |
 | `ADMIN` | `app_metadata.role` = admin |
+
+A rule can also give the permission of the reads and of the writes of the same paths: `{ paths: ["/api/v1/permits", "/api/v1/permits/**"], read: "permit:read", write: "permit:manage" }`. `read` covers `GET` and `HEAD`, `write` covers `POST`, `PUT`, `PATCH` and `DELETE`; the two sets never overlap, so a pair does not depend on the order of the rules (the old "every other method" rule after a `GET, HEAD` rule is gone). A rule with `read` or `write` alone leaves the other methods to the rules below, and in the end to the deny. `read`/`write` cannot be combined with `methods`, `permission` or an access other than `PERMISSION`. Other methods (`TRACE`, non-standard ones) match no read/write rule and are denied.
 
 The operator and admin functions are guarded by permissions, one per function; reads and writes are apart where the GUI needs it (`fine:read` / `fine:manage`, `camera:read` / `camera:admin`, `permit:read` / `permit:manage`; a write permission does not imply its read permission) (`/ai/**` `ai:use`, `GET`/`HEAD` `/cameras/admin/**` `camera:read` and the other methods `camera:admin`,
 `/lookup/**` `lookup:vehicle`, `GET`/`HEAD` `/permits/**` `permit:read` and the other methods `permit:manage`, `sessions/zone/**` and `sessions/site/**` `session:read`, session start and pay `session:manage`,
@@ -69,14 +73,14 @@ The operator and admin functions are guarded by permissions, one per function; r
 `/access/**` `access:read` for GET, `role:manage` for POST/PUT/PATCH/DELETE on `/access/roles/**` and `access:manage` for the rest, including `POST /access/users/invite`). Deliberately **not** gated by a permission here, because one gateway permission cannot express them or the service decides on ownership and sites; each is an explicit
 `AUTHENTICATED` rule (any valid token): `GET /files/evidence/*/url` (owner of the fine, or staff with `file:view`), `POST /zones/check-overlap` (service accepts `zone:read`, `spot:read`, `zone:write` or `spot:write`,
 ahead of the zone-write rule), the public catalogue every signed-in user reads (ADR 0017; `GET` and `HEAD` of `mapping/zones/*/spots`, `mapping/zones/*/geojson`, `mapping/spots/*`, `mapping/sites/*/spots[/geojson]`, `zones`, `zones/nearest`, `zones/*/rules`, `sites`, `sites/*`, `sites/*/spots[/geojson]`, `sites/*/rules`; the rules need no permission and no site scope, parking rules are what the sign says),
-the rest of `/fines/**` (incl. `GET fines/*/explanation` and `GET`/`POST fines/*/dispute`, which drivers use for their own fines; rule-service answers 404 for fines the caller may not see), `/users/**` incl. `/users/me/plates`,
+the other endpoints of rule-service under `/fines` (`GET fines/plate/*`, `fines/site/*`, `fines/zone/*`, `fines/*`, plus `GET fines/*/explanation` and `GET`/`POST fines/*/dispute`, which drivers use for their own fines; rule-service answers 404 for fines the caller may not see), `users/me/plates` and `users/me/profile` (the methods the service serves),
 `GET /cameras` and `GET cameras/*` (the list and the status of a camera, the service wants `camera:read` or `stream:operator`), `GET sessions/plate/*` and `GET sessions/*` (one session), `GET sessions/*/events`, `GET violations/plate/*` (a driver's own plates or `violation:read`),
-`GET events/stream/driver`, the `payments` calls above and `/notifications/**`.
+`GET events/stream/driver`, the `payments` calls above and the notification calls (`GET notifications`, `PATCH notifications/*/read`, `POST notifications/read-all` and `test-push`, `PUT`/`DELETE notifications/push-subscription`). `GET` endpoints also allow `HEAD`. There is no prefix rule for all methods (`/fines/**`, `/users/**`, `/notifications/**`, `/auth/**` used to be): every endpoint of those services is listed, so a path or method a service does not serve is denied at the edge (the sign-in endpoints of `/auth` are `PUBLIC`: `GET` and `HEAD` `locales` and `me`, `POST` `login`, `register`, `refresh`, `reset-password`, `oauth/authorize`, `oauth/token`, `logout`; `me` and `logout` check the token in the service). A new endpoint of those services needs its line in `application.yml`.
 
 **Deny by default.** `SecurityConfig` ends with `denyAll()`: a request no rule matches is refused whether a route exists for it or not (401 without a token, `application/problem+json` 403 with one), so an endpoint a service adds is
 unreachable through the gateway until a rule lists it (the same goes for a method a rule does not list, e.g. `GET sessions/*/end`). `/internal/**` has neither a route nor a rule and must never get one; `/actuator/**` is denied
 except health, info and the key-protected `prometheus`.
-`permission` is only valid with `access: PERMISSION` and must be in the catalogue (`Permissions`, mirrors
+`permission`, `read` and `write` must name a permission in the catalogue (`Permissions`, mirrors
 `smart-parking-e2e/contracts/permissions.json`): a misspelt or unknown name **fails the startup** instead of guarding nothing.
 
 Claims (written by the Supabase access-token hook, ADR 0002):
@@ -109,8 +113,9 @@ header). Logs stay English. The reactive chain has no MVC locale resolver: `Requ
 * The texts live in `src/main/resources/messages/errors.properties` (English base, complete) and `errors_sv.properties` (Swedish):
   `title.<reason>` and `error.<reason>`; a status without an entry (for example 418) keeps the English reason phrase.
   `ErrorBundleParityTest` checks keys, placeholders and apostrophes of a new language file.
-* In code: `ProblemResponses.writeLocalized(exchange, mapper, messages, status, titleKey, title, errorKey, detail)` (the English texts are the
-  fallback, byte for byte the old ones); `ProblemResponses.write(...)` without a code still works.
+* In code: `ProblemWriter.write(exchange, status, GatewayProblem)` (a bean; the problem holds the title and detail keys and the English texts that
+  stay when a bundle has no entry, byte for byte the old ones). `GatewayErrorHandler` maps a failure to a status with a list of classifiers and a status to a
+  `GatewayProblem` with a table; `ProblemAuthenticationHandlers` gives the chain its 401 and 403.
 * The rate limiter's 429 (`RequestRateLimiter`) is Spring Cloud Gateway's own empty response and has no body to translate.
 * Left English on purpose: the `IllegalArgumentException` of a rule that does not validate (start-up only) and the log lines.
 
@@ -126,8 +131,8 @@ header). Logs stay English. The reactive chain has no MVC locale resolver: `Requ
 | `GATEWAY_TRUSTED_PROXIES` | - (required) | `parkview.gateway.trusted-proxies`, an integer >= 0: the number of reverse proxies / load balancers between the internet and the gateway. `0` = none: `X-Forwarded-For` is ignored and the rate-limit key is the socket address. `n >= 1`: the address `n` hops from the right of `X-Forwarded-For` is the client. **Warning:** behind a load balancer set it to the number of proxies, otherwise all clients share one bucket (`0`) or a client can pick its own bucket and bypass the login limit (too high). The gateway does not start without it |
 | `FRONTEND_URL` | `http://localhost:5173` | CORS origin(s) |
 | `REDIS_HOST` / `REDIS_PORT` | `localhost` / `6379` | rate limiter (fails open when Redis is down) |
-| `*_SERVICE_URL` etc. | `http://localhost:<port>` | downstream base URLs: `AUTH_SERVICE_URL`, `RULE_ENGINE_URL`, `SESSION_SERVICE_URL`, `PARKING_MAPPING_URL`, `EVENT_STREAMING_URL`, `INGESTION_SERVICE_URL`, `FILE_SERVICE_URL`, `NOTIFICATION_SERVICE_URL`, `LOOKUP_SERVICE_URL`, `PAYMENT_SERVICE_URL`, `AI_SERVICE_URL` |
-| `DOCS_ENABLED` | `false` | aggregated Swagger UI at `/swagger-ui.html` (each service must have `DOCS_ENABLED=true` too). Never in production |
+| `*_SERVICE_URL` etc. | `http://localhost:<port>` | downstream base URLs (defined once in `parkview.gateway.services`, the routes refer to them): `AUTH_SERVICE_URL`, `RULE_ENGINE_URL`, `SESSION_SERVICE_URL`, `PARKING_MAPPING_URL`, `EVENT_STREAMING_URL`, `INGESTION_SERVICE_URL`, `FILE_SERVICE_URL`, `NOTIFICATION_SERVICE_URL`, `LOOKUP_SERVICE_URL`, `PAYMENT_SERVICE_URL`, `AI_SERVICE_URL` |
+| `DOCS_ENABLED` | `false` | aggregated Swagger UI at `/swagger-ui.html` (each service must have `DOCS_ENABLED=true` too); its entries and the `/docs/<service>/v3/api-docs` routes are generated from `parkview.gateway.services` (services with `docs: false`, ingestion and ai, are left out). Never in production |
 
 ## Tracing
 

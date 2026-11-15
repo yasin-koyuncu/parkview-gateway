@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.parkview.gateway.config.CorsConfig;
 import com.parkview.gateway.config.SecurityConfig;
 import com.parkview.gateway.web.ErrorMessagesConfig;
+import com.parkview.gateway.web.ProblemAuthenticationHandlers;
+import com.parkview.gateway.web.ProblemWriter;
 import org.springframework.boot.autoconfigure.jackson.JacksonAutoConfiguration;
 import org.springframework.boot.autoconfigure.validation.ValidationAutoConfiguration;
 import org.springframework.context.annotation.Bean;
@@ -35,7 +37,8 @@ import java.util.Map;
 @TestComponent   // keeps it out of the component scan of the full-context tests (GatewayRoutingTest)
 @EnableWebFlux
 @ImportAutoConfiguration({JacksonAutoConfiguration.class, ValidationAutoConfiguration.class})
-@Import({SecurityConfig.class, CorsConfig.class, ErrorMessagesConfig.class})
+@Import({SecurityConfig.class, CorsConfig.class, ErrorMessagesConfig.class, ProblemWriter.class, ProblemAuthenticationHandlers.class,
+        InternalKeyAuthorization.class})
 class AuthorizationTestApp {
 
     static String token(Map<String, Object> appMetadata) {

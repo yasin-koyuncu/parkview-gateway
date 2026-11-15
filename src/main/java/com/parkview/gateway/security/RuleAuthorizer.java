@@ -1,6 +1,7 @@
 package com.parkview.gateway.security;
 
 import com.parkview.gateway.config.GatewayProperties;
+import com.parkview.platform.security.Role;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.config.web.server.ServerHttpSecurity.AuthorizeExchangeSpec;
 
@@ -13,13 +14,15 @@ public final class RuleAuthorizer {
     }
 
     public static void apply(AuthorizeExchangeSpec exchanges, List<GatewayProperties.Rule> rules) {
-        for (GatewayProperties.Rule rule : rules) {
-            String[] paths = rule.paths().toArray(String[]::new);
-            if (rule.methods().isEmpty()) {
-                require(rule, exchanges.pathMatchers(paths));
-            } else {
-                for (String method : rule.methods()) {
-                    require(rule, exchanges.pathMatchers(HttpMethod.valueOf(method), paths));
+        for (GatewayProperties.Rule declared : rules) {
+            for (GatewayProperties.Rule rule : declared.expand()) {
+                String[] paths = rule.paths().toArray(String[]::new);
+                if (rule.methods().isEmpty()) {
+                    require(rule, exchanges.pathMatchers(paths));
+                } else {
+                    for (String method : rule.methods()) {
+                        require(rule, exchanges.pathMatchers(HttpMethod.valueOf(method), paths));
+                    }
                 }
             }
         }
@@ -29,8 +32,8 @@ public final class RuleAuthorizer {
         switch (rule.access()) {
             case PUBLIC -> spec.permitAll();
             case AUTHENTICATED -> spec.authenticated();
-            case OPERATOR -> spec.hasRole("OPERATOR");
-            case ADMIN -> spec.hasRole("ADMIN");
+            case OPERATOR -> spec.hasRole(Role.OPERATOR.name());
+            case ADMIN -> spec.hasRole(Role.ADMIN.name());
             case PERMISSION -> spec.hasAuthority(rule.permission());
         }
     }

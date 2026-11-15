@@ -1,5 +1,6 @@
 package com.parkview.gateway.config;
 
+import com.parkview.gateway.web.PlatformHeaders;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.cors.CorsConfiguration;
@@ -22,8 +23,8 @@ public class CorsConfig {
         CorsConfiguration cors = new CorsConfiguration();
         cors.setAllowedOriginPatterns(properties.allowedOrigins());
         cors.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
-        cors.setAllowedHeaders(List.of("Authorization", "Content-Type", "Accept", "X-Request-Id", "Last-Event-ID"));
-        cors.setExposedHeaders(List.of("X-Request-Id", "X-Total-Count", "Retry-After", "WWW-Authenticate"));
+        cors.setAllowedHeaders(List.of("Authorization", "Content-Type", "Accept", PlatformHeaders.REQUEST_ID, "Last-Event-ID"));
+        cors.setExposedHeaders(List.of(PlatformHeaders.REQUEST_ID, "X-Total-Count", "Retry-After", "WWW-Authenticate"));
         cors.setAllowCredentials(false);
         cors.setMaxAge(Duration.ofHours(1));
 
