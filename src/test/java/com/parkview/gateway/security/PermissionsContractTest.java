@@ -14,12 +14,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
- * Keeps {@link Permissions} identical to {@code smart-parking-e2e/contracts/permissions.json}. Skipped when the e2e repo
+ * Keeps {@link Permissions} identical to {@code parkview-e2e/contracts/permissions.json}. Skipped when the e2e repo
  * is not checked out next to this one (CI builds of a single repository).
  */
 class PermissionsContractTest {
 
-    private static final Path CONTRACT = Path.of("..", "smart-parking-e2e", "contracts", "permissions.json");
+    private static final Path CONTRACT = Path.of("..", "parkview-e2e", "contracts", "permissions.json");
 
     @Test
     void catalogueAndTestRoleBundlesMatchTheContract() throws IOException {

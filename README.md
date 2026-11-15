@@ -81,7 +81,7 @@ the other endpoints of rule-service under `/fines` (`GET fines/plate/*`, `fines/
 unreachable through the gateway until a rule lists it (the same goes for a method a rule does not list, e.g. `GET sessions/*/end`). `/internal/**` has neither a route nor a rule and must never get one; `/actuator/**` is denied
 except health, info and the key-protected `prometheus`.
 `permission`, `read` and `write` must name a permission in the catalogue (`Permissions`, mirrors
-`smart-parking-e2e/contracts/permissions.json`): a misspelt or unknown name **fails the startup** instead of guarding nothing.
+`parkview-e2e/contracts/permissions.json`): a misspelt or unknown name **fails the startup** instead of guarding nothing.
 
 Claims (written by the Supabase access-token hook, ADR 0002):
 

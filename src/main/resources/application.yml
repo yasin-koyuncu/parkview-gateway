@@ -295,7 +295,7 @@ parkview:
     # token, problem+json 403 with one). A path is open to every signed-in user only through an explicit `access: AUTHENTICATED` rule below
     # ("any valid token, the service decides"); a path nobody lists, under a routed prefix or not, never reaches a service. A new
     # endpoint therefore needs a rule here before the frontend can call it. /internal/** has no route and no rule, and must never get one.
-    # The services re-check roles AND object ownership (sites, plate ownership) themselves. Scope is by site (ADR 0009 of smart-parking-e2e): every
+    # The services re-check roles AND object ownership (sites, plate ownership) themselves. Scope is by site (ADR 0009 of parkview-e2e): every
     # zone route has a site twin with exactly the same permission; zone ids stay valid (a zone created before sites has a site of its id).
     #
     # How a rule says what it needs (see GatewayProperties.Rule):

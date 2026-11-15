@@ -9,7 +9,7 @@ import java.util.Set;
  */
 public final class Permissions {
 
-    // BEGIN GENERATED permissions (contracts/permissions.json in smart-parking-e2e; do not edit)
+    // BEGIN GENERATED permissions (contracts/permissions.json in parkview-e2e; do not edit)
     /** Every permission the gateway knows; a rule naming anything else fails the startup. */
     public static final Set<String> ALL = Set.of(
             "zone:read", "zone:write", "spot:read", "spot:write", "session:read", "session:manage", "session:correct",
