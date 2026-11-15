@@ -1,4 +1,6 @@
-# api-gateway
+# parkview-gateway
+
+> Formerly `api-gateway`.
 
 Single entry point of the Park & View platform (Spring Cloud Gateway, WebFlux, Java 24).
 Browsers, drivers and cameras talk only to this service; everything behind it is internal.
