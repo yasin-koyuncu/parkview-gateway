@@ -624,6 +624,31 @@ class GatewayRoutingTest {
         assertThat(tooMany).as("requests beyond the burst of 5 are throttled").isGreaterThan(0);
     }
 
+    /** ADR 0020: the public fine page needs no token, carries no identity, takes only a small body and is limited like a sign-in. */
+    @Test
+    void thePublicFinePageIsRoutedWithoutATokenAndLimitedLikeASignIn() throws Exception {
+        client.post().uri("/api/v1/public/fines/f1/lookup").contentType(MediaType.APPLICATION_JSON)
+                .header("X-User-Id", "attacker").header("X-User-Role", "admin")
+                .bodyValue("{\"plate\":\"ABC123\"}").exchange().expectStatus().isOk();
+        RecordedRequest upstream = upstreamRequest();
+        assertThat(upstream.getPath()).isEqualTo("/api/v1/public/fines/f1/lookup");
+        assertThat(upstream.getHeader("X-User-Id")).isNull();
+        assertThat(upstream.getHeader("X-User-Role")).isNull();
+
+        client.post().uri("/api/v1/public/fines/f1/lookup").contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{\"plate\":\"" + "x".repeat(40_000) + "\"}").exchange().expectStatus().isEqualTo(HttpStatus.PAYLOAD_TOO_LARGE);
+
+        int tooMany = 0;
+        for (int i = 0; i < 12; i++) {
+            var result = client.post().uri("/api/v1/public/fines/f1/lookup").contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue("{\"plate\":\"ABC123\"}").exchange().returnResult(String.class);
+            if (result.getStatus().value() == 429) {
+                tooMany++;
+            }
+        }
+        assertThat(tooMany).as("requests beyond the burst of 5 are throttled").isGreaterThan(0);
+    }
+
     @Test
     void aSpoofedXForwardedForDoesNotGiveTheCallerABucketOfItsOwn() {
         // trusted-proxies=0: X-Forwarded-For is ignored, so a new "client address" per request does not escape the login limit

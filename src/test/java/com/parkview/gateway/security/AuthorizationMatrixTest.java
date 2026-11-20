@@ -666,6 +666,26 @@ class AuthorizationMatrixTest {
         assertThat(status(HttpMethod.GET, "/api/v1/sessions/plate/ABC123", null)).isEqualTo(401);
     }
 
+    /** ADR 0020: a fine is read with its number and the plate without a token, and only through this one path and method. */
+    @Test
+    void thePublicFinePageIsOpenForItsOwnPathAndMethodOnly() {
+        assertThat(status(HttpMethod.POST, "/api/v1/public/fines/f1/lookup", null)).isEqualTo(200);
+
+        // not the other methods, not a longer or other path, not the fine endpoints next to it: those need a token
+        for (HttpMethod method : List.of(HttpMethod.GET, HttpMethod.PUT, HttpMethod.PATCH, HttpMethod.DELETE)) {
+            assertThat(status(method, "/api/v1/public/fines/f1/lookup", null)).as(method + " anonymous").isEqualTo(401);
+            assertThat(status(method, "/api/v1/public/fines/f1/lookup", everything())).as(method + " with every permission").isEqualTo(403);
+        }
+        for (String path : List.of("/api/v1/public/fines/f1/lookup/more", "/api/v1/public/fines/f1", "/api/v1/public/fines/f1/explanation",
+                "/api/v1/public/fines", "/api/v1/public/other")) {
+            assertThat(status(HttpMethod.POST, path, null)).as(path + " anonymous").isEqualTo(401);
+            assertThat(status(HttpMethod.POST, path, everything())).as(path + " with every permission").isEqualTo(403);
+        }
+        assertThat(status(HttpMethod.GET, "/api/v1/fines/f1", null)).isEqualTo(401);
+        assertThat(status(HttpMethod.GET, "/api/v1/fines/f1/explanation", null)).isEqualTo(401);
+        assertThat(status(HttpMethod.POST, "/api/v1/fines/f1/dispute", null)).isEqualTo(401);
+    }
+
     // ── deny by default: nothing is open unless a rule says so ──────────────────
 
     /** A caller who holds every role and permission: only a missing rule can keep it out. */
