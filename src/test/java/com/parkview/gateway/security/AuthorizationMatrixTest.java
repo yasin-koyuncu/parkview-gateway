@@ -257,9 +257,11 @@ class AuthorizationMatrixTest {
 
     @Test
     void permissionNamesAreMatchedExactlyNotByPrefixOrCase() {
-        for (String near : List.of("zone", "zone:", "zone:*", "Zone:Write", "zone:write ", "zone:writer", "*")) {
+        for (String near : List.of("zone", "zone:", "zone:*", "Zone:Write", "zone:writer", "zone: write", "*")) {
             assertThat(status(HttpMethod.POST, "/api/v1/zones", Map.of("permissions", List.of(near)))).as(near).isEqualTo(403);
         }
+        // the one tolerance of parkview-platform (PermissionClaims.parse): blanks around the name are trimmed, nothing inside it
+        assertThat(status(HttpMethod.POST, "/api/v1/zones", Map.of("permissions", List.of(" zone:write ")))).isEqualTo(200);
     }
 
     // ── access management routes ────────────────────────────────────────────────
@@ -463,7 +465,7 @@ class AuthorizationMatrixTest {
     @Test
     void finesAndUserProfileNeedOnlyAValidToken() {
         for (String path : List.of("/api/v1/fines/plate/ABC123", "/api/v1/fines/zone/z1", "/api/v1/fines/site/s1", "/api/v1/fines/f1",
-                "/api/v1/users/me")) {
+                "/api/v1/users/me/profile")) {
             assertThat(status(HttpMethod.GET, path, null)).as(path + " anonymous").isEqualTo(401);
             assertThat(status(HttpMethod.GET, path, Map.of("role", "driver", "permissions", List.of()))).as(path + " driver").isEqualTo(200);
             assertThat(status(HttpMethod.GET, path, Map.of("role", "operator", "permissions", List.of()))).as(path + " operator").isEqualTo(200);
@@ -664,6 +666,9 @@ class AuthorizationMatrixTest {
         assertThat(status(HttpMethod.GET, "/api/v1/zones/nearest", Map.of("role", "driver"))).isEqualTo(200);
         assertThat(status(HttpMethod.GET, "/api/v1/mapping/zones/z1/spots", Map.of("role", "driver"))).isEqualTo(200);
         assertThat(status(HttpMethod.GET, "/api/v1/sessions/plate/ABC123", null)).isEqualTo(401);
+        // the public catalogue (ADR 0017): one zone is a read for any signed-in user, a driver included, not for anonymous callers
+        assertThat(status(HttpMethod.GET, "/api/v1/zones/z1", Map.of("role", "driver", "permissions", List.of()))).isEqualTo(200);
+        assertThat(status(HttpMethod.GET, "/api/v1/zones/z1", null)).isEqualTo(401);
     }
 
     /** ADR 0020: a fine is read with its number and the plate without a token, and only through this one path and method. */
@@ -706,7 +711,7 @@ class AuthorizationMatrixTest {
                 new Call(HttpMethod.GET, "/api/v1/mapping/sites/s1/other"), new Call(HttpMethod.GET, "/api/v1/mapping/zones/z1/rules"),
                 new Call(HttpMethod.GET, "/api/v1/mapping/sites/s1/x/y"),
                 new Call(HttpMethod.GET, "/api/v1/mapping/unknown"), new Call(HttpMethod.GET, "/api/v1/mapping/sites/s1/rules"),
-                new Call(HttpMethod.GET, "/api/v1/zones/z1"), new Call(HttpMethod.GET, "/api/v1/zones/z1/other"),
+                new Call(HttpMethod.GET, "/api/v1/zones/z1/other"), new Call(HttpMethod.GET, "/api/v1/users/me"),
                 new Call(HttpMethod.GET, "/api/v1/sites/s1/other"),
                 new Call(HttpMethod.GET, "/api/v1/events"), new Call(HttpMethod.GET, "/api/v1/events/stream"),
                 new Call(HttpMethod.POST, "/api/v1/events/stream/driver"),
