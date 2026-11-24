@@ -271,6 +271,10 @@ parkview:
     audience: ${SUPABASE_AUDIENCE:authenticated}
     # Protects the gateway's own /actuator/prometheus: an operations path, so it takes the ops key like every other service.
     internal-api-key: ${OPS_API_KEY:}
+  # Where the permissions of the caller come from (ADR 0022 D3): `claim` (default) is the token as before, `directory` is identity-service (cached in Redis).
+  permissions:
+    source: ${PARKVIEW_PERMISSIONS_SOURCE:claim}
+    auth-internal-api-key: ${AUTH_INTERNAL_API_KEY:}
 
   gateway:
     # REQUIRED, no default: the number of reverse proxies / load balancers in front of the gateway (0 = none: X-Forwarded-For is

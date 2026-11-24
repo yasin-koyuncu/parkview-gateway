@@ -88,7 +88,8 @@ except health, info and the key-protected `prometheus`.
 Claims (written by the Supabase access-token hook, ADR 0002):
 
 * `app_metadata.role` (`admin` \| `operator` \| `driver`) becomes `ROLE_*`; ADMIN implies OPERATOR.
-* `app_metadata.permissions` (string[]) becomes one authority per entry, named exactly like the permission. Names are matched exactly (no prefix, case folding or wildcards); an entry that is not of the form `resource:action` (e.g. `ROLE_ADMIN`) is dropped, never granted.
+* The permissions of the caller come from the claim `app_metadata.permissions` (the default, `parkview.permissions.source=claim`) or from identity-service (`directory`, ADR 0022 D3,
+  see "Permissions from a directory" below). In both cases each permission becomes one authority, named exactly like the permission. Names are matched exactly (no prefix, case folding or wildcards); an entry that is not of the form `resource:action` (e.g. `ROLE_ADMIN`) is dropped, never granted.
 * Nothing else is read: the token carries no `sites` and no `plates` claim (ADR 0011), so the gateway has no site or plate scope and makes no site or plate lookup of its own.
 * A token **without** the `permissions` claim has no permissions, whatever its `role` (a `role=admin` token without the claim must not hold everything); there is no fallback or switch. The role authority still comes from `role`. A token whose claim is `[]` has none either: an admin whose permissions were all revoked holds nothing.
 
@@ -128,6 +129,9 @@ header). Logs stay English. The reactive chain has no MVC locale resolver: `Requ
 | `PORT` | 8080 | listen port |
 | `SUPABASE_URL` | - (required) | Supabase project URL; issuer is `<url>/auth/v1` |
 | `SUPABASE_AUDIENCE` | `authenticated` | required `aud` claim |
+| `PARKVIEW_PERMISSIONS_SOURCE` | `claim` | where the permissions of the caller come from: `claim` (the token) or `directory` (identity-service, cached in Redis; ADR 0022 D3) |
+| `AUTH_INTERNAL_API_KEY` | empty | the key identity-service expects, needed with `directory` (no key: every lookup fails and every request that needs a permission is a 503) |
+| `PARKVIEW_PERMISSIONS_CACHE_TTL`, `PARKVIEW_PERMISSIONS_STALE_LIMIT` | `30s`, `5m` | how long an answer is served without asking, and how long it is kept for an identity-service that does not answer |
 | `OPS_API_KEY` | empty | the operations key, sent as `X-Internal-Api-Key` by the scraper to this gateway's own `/actuator/prometheus`; empty disables it (the gateway has no `INTERNAL_API_KEY`: no service calls it internally) |
 | `AI_DETECTION_INTERNAL_API_KEY` | empty | the ai-detection-service's internal key; the gateway sends it as `X-Internal-Api-Key` on the `ai-service` route (never the gateway's own key). To rotate: the callee accepts old and new (`INTERNAL_API_KEY_PREVIOUS`), roll this value to the new key, then drop the previous one |
 | `GATEWAY_TRUSTED_PROXIES` | - (required) | `parkview.gateway.trusted-proxies`, an integer >= 0: the number of reverse proxies / load balancers between the internet and the gateway. `0` = none: `X-Forwarded-For` is ignored and the rate-limit key is the socket address. `n >= 1`: the address `n` hops from the right of `X-Forwarded-For` is the client. **Warning:** behind a load balancer set it to the number of proxies, otherwise all clients share one bucket (`0`) or a client can pick its own bucket and bypass the login limit (too high). The gateway does not start without it |

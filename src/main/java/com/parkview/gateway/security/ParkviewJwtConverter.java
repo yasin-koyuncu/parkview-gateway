@@ -1,6 +1,7 @@
 package com.parkview.gateway.security;
 
 import com.parkview.platform.security.PermissionClaims;
+import com.parkview.platform.security.UpstreamUnavailableException;
 import com.parkview.platform.security.Role;
 import org.springframework.core.convert.converter.Converter;
 import org.springframework.security.core.GrantedAuthority;
@@ -29,9 +30,21 @@ public final class ParkviewJwtConverter {
     private ParkviewJwtConverter() {
     }
 
+    /** The permissions are the claim of the token. */
     public static ReactiveJwtAuthenticationConverter create() {
         ReactiveJwtAuthenticationConverter converter = new ReactiveJwtAuthenticationConverter();
         converter.setJwtGrantedAuthoritiesConverter(authorities());
+        return converter;
+    }
+
+    /**
+     * The permissions are looked up for the subject of the token (ADR 0022 D3) and the claim is not read at all: a token that still carries it gains nothing from it.
+     * A directory that cannot answer refuses the request ({@link PermissionsUnavailableAuthenticationException} with the outage as its cause, which the entry point answers with 503): never
+     * "no permissions".
+     */
+    public static ReactiveJwtAuthenticationConverter create(ReactivePermissionDirectory directory) {
+        ReactiveJwtAuthenticationConverter converter = new ReactiveJwtAuthenticationConverter();
+        converter.setJwtGrantedAuthoritiesConverter(authorities(directory));
         return converter;
     }
 
@@ -41,6 +54,14 @@ public final class ParkviewJwtConverter {
             result.addAll(permissions(jwt));
             return Flux.fromIterable(result);
         };
+    }
+
+    static Converter<Jwt, Flux<GrantedAuthority>> authorities(ReactivePermissionDirectory directory) {
+        return jwt -> Flux.fromIterable(roles(jwt)).concatWith(directory.permissionsOf(jwt.getSubject())
+                .flatMapMany(Flux::fromIterable)
+                .<GrantedAuthority>map(SimpleGrantedAuthority::new)
+                .onErrorMap(UpstreamUnavailableException.class,
+                        e -> new PermissionsUnavailableAuthenticationException("The permissions of the caller cannot be determined", e)));
     }
 
     static List<GrantedAuthority> roles(Jwt jwt) {
