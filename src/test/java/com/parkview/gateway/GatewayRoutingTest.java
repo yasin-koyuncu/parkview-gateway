@@ -106,11 +106,11 @@ class GatewayRoutingTest {
     /** A token as the token hook writes it: the role and, in {@code permissions}, the permissions of that role's bundle. */
     private static String validToken(String role, String subject) {
         return token(Map.of("role", role, "permissions", RoleBundles.of(role).stream().sorted().toList()), subject,
-                "http://issuer.test/auth/v1", "authenticated", Instant.now().plusSeconds(300), SIGNING_KEY);
+                "http://issuer.test/auth/v1", "parkview-api", Instant.now().plusSeconds(300), SIGNING_KEY);
     }
 
     private static String permissionToken(String subject, String... permissions) {
-        return token(Map.of("permissions", List.of(permissions)), subject, "http://issuer.test/auth/v1", "authenticated",
+        return token(Map.of("permissions", List.of(permissions)), subject, "http://issuer.test/auth/v1", "parkview-api",
                 Instant.now().plusSeconds(300), SIGNING_KEY);
     }
 
@@ -405,10 +405,10 @@ class GatewayRoutingTest {
         client.post().uri("/api/v1/zones").header("Authorization", "Bearer " + validToken("admin", "ad-9"))
                 .contentType(MediaType.APPLICATION_JSON).bodyValue("{}").exchange().expectStatus().isOk();
         // role=admin without the claim holds nothing
-        String noClaim = token("admin", "ad-7", "http://issuer.test/auth/v1", "authenticated", Instant.now().plusSeconds(300), SIGNING_KEY);
+        String noClaim = token("admin", "ad-7", "http://issuer.test/auth/v1", "parkview-api", Instant.now().plusSeconds(300), SIGNING_KEY);
         client.post().uri("/api/v1/zones").header("Authorization", "Bearer " + noClaim)
                 .contentType(MediaType.APPLICATION_JSON).bodyValue("{}").exchange().expectStatus().isForbidden();
-        String revoked = token(Map.of("role", "admin", "permissions", List.of()), "ad-8", "http://issuer.test/auth/v1", "authenticated",
+        String revoked = token(Map.of("role", "admin", "permissions", List.of()), "ad-8", "http://issuer.test/auth/v1", "parkview-api",
                 Instant.now().plusSeconds(300), SIGNING_KEY);
         client.post().uri("/api/v1/zones").header("Authorization", "Bearer " + revoked)
                 .contentType(MediaType.APPLICATION_JSON).bodyValue("{}").exchange().expectStatus().isForbidden();
@@ -554,10 +554,10 @@ class GatewayRoutingTest {
     void tokensWithWrongIssuerAudienceExpiryKeyOrAlgorithmAreRejected() throws Exception {
         ECKey other = new ECKeyGenerator(Curve.P_256).keyID("test-key").generate();   // same kid, different key
         String[] bad = {
-                token("admin", "x", "http://evil.test/auth/v1", "authenticated", Instant.now().plusSeconds(300), SIGNING_KEY),
+                token("admin", "x", "http://evil.test/auth/v1", "parkview-api", Instant.now().plusSeconds(300), SIGNING_KEY),
                 token("admin", "x", "http://issuer.test/auth/v1", "other-audience", Instant.now().plusSeconds(300), SIGNING_KEY),
-                token("admin", "x", "http://issuer.test/auth/v1", "authenticated", Instant.now().minusSeconds(3600), SIGNING_KEY),
-                token("admin", "x", "http://issuer.test/auth/v1", "authenticated", Instant.now().plusSeconds(300), other),
+                token("admin", "x", "http://issuer.test/auth/v1", "parkview-api", Instant.now().minusSeconds(3600), SIGNING_KEY),
+                token("admin", "x", "http://issuer.test/auth/v1", "parkview-api", Instant.now().plusSeconds(300), other),
                 hs256Token(),
                 "not-a-jwt"
         };
@@ -570,7 +570,7 @@ class GatewayRoutingTest {
 
     private static String hs256Token() throws JOSEException {
         SignedJWT jwt = new SignedJWT(new JWSHeader(JWSAlgorithm.HS256), new JWTClaimsSet.Builder()
-                .issuer("http://issuer.test/auth/v1").audience("authenticated").subject("x")
+                .issuer("http://issuer.test/auth/v1").audience("parkview-api").subject("x")
                 .expirationTime(Date.from(Instant.now().plusSeconds(300))).claim("app_metadata", Map.of("role", "admin")).build());
         jwt.sign(new MACSigner("0123456789abcdef0123456789abcdef"));
         return jwt.serialize();

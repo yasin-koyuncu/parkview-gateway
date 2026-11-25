@@ -24,8 +24,8 @@ The rule matrix is `.claude/rules/rule-matrix.md`; this rule is everything else 
 
 ## Token and claims
 
-- Tokens are ES256 JWTs verified against `<SUPABASE_URL>/auth/v1/.well-known/jwks.json` (not `/auth/v1/keys`), issuer `${SUPABASE_URL}/auth/v1`, audience `authenticated` (`AudienceValidator`).
-  `SUPABASE_URL` has no default: a missing value fails startup. The services validate the token again; the gateway is not the only gate.
+- Tokens are ES256 JWTs verified against the JWKS of the configured issuer (`PARKVIEW_SECURITY_JWKS_URI`, default `<issuer>/.well-known/jwks.json`), issuer `${PARKVIEW_SECURITY_ISSUER}`, audience `parkview-api` (`AudienceValidator`).
+  `PARKVIEW_SECURITY_ISSUER` has no default: a missing value fails startup. The services validate the token again; the gateway is not the only gate.
 - `ParkviewJwtConverter` reads only `app_metadata.role` (to `ROLE_*`, `ADMIN` implies `OPERATOR`) and `app_metadata.permissions` (one authority per `resource:action` entry, named exactly like the permission; other entries
   such as `ROLE_ADMIN` are dropped). Claim parsing is `Role` and `PermissionClaims` of `parkview-security-core`: fix those in the library, not here. No `sites` or `plates` claim exists (ADR 0011) and the gateway makes no lookup for them.
   No role fallback: a token without `permissions` holds none.

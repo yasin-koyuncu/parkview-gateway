@@ -95,7 +95,7 @@ Claims (written by the Supabase access-token hook, ADR 0002):
 
 ## Security behaviour worth knowing
 
-* Tokens are verified with ES256 against `<SUPABASE_URL>/auth/v1/.well-known/jwks.json`; issuer and `aud=authenticated` are checked.
+* Tokens are verified with ES256 against the JWKS of the configured issuer (`PARKVIEW_SECURITY_JWKS_URI`, default `<issuer>/.well-known/jwks.json`); issuer and `aud=parkview-api` (`PARKVIEW_SECURITY_AUDIENCE`) are checked.
 * `X-User-Id`, `X-User-Role`, `X-User-Email`, `X-Internal-Api-Key` sent by a client are removed. `X-User-Id`/`X-User-Role` are then set from the verified JWT as a convenience for the services (they must not use them for authorisation).
 * CORS is part of the security chain, so preflight requests work without a token. Allowed origins: `FRONTEND_URL` (comma separated). No credentials/cookies.
 * `?token=` is honoured only on `parkview.gateway.sse-token-paths`; it is moved into the `Authorization` header and removed from the URL before proxying.
@@ -127,8 +127,9 @@ header). Logs stay English. The reactive chain has no MVC locale resolver: `Requ
 | Variable | Default | Description |
 |---|---|---|
 | `PORT` | 8080 | listen port |
-| `SUPABASE_URL` | - (required) | Supabase project URL; issuer is `<url>/auth/v1` |
-| `SUPABASE_AUDIENCE` | `authenticated` | required `aud` claim |
+| `PARKVIEW_SECURITY_ISSUER` | - (required) | Expected JWT `iss`, set explicitly |
+| `PARKVIEW_SECURITY_JWKS_URI` | `<issuer>/.well-known/jwks.json` | Where the signing keys are fetched |
+| `PARKVIEW_SECURITY_AUDIENCE` | `parkview-api` | required `aud` claim |
 | `PARKVIEW_PERMISSIONS_SOURCE` | `claim` | where the permissions of the caller come from: `claim` (the token) or `directory` (identity-service, cached in Redis; ADR 0022 D3) |
 | `AUTH_INTERNAL_API_KEY` | empty | the key identity-service expects, needed with `directory` (no key: every lookup fails and every request that needs a permission is a 503) |
 | `PARKVIEW_PERMISSIONS_CACHE_TTL`, `PARKVIEW_PERMISSIONS_STALE_LIMIT` | `30s`, `5m` | how long an answer is served without asking, and how long it is kept for an identity-service that does not answer |

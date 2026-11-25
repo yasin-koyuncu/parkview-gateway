@@ -267,8 +267,9 @@ parkview:
     # The public gateway starts its own traces; set TRACING_TRUST_INCOMING=true only behind a trusted tracing proxy.
     trust-incoming-context: ${TRACING_TRUST_INCOMING:false}
   security:
-    issuer: ${SUPABASE_URL}/auth/v1
-    audience: ${SUPABASE_AUDIENCE:authenticated}
+    issuer: ${PARKVIEW_SECURITY_ISSUER}
+    jwks-uri: ${PARKVIEW_SECURITY_JWKS_URI:}
+    audience: ${PARKVIEW_SECURITY_AUDIENCE:parkview-api}
     # Protects the gateway's own /actuator/prometheus: an operations path, so it takes the ops key like every other service.
     internal-api-key: ${OPS_API_KEY:}
   # Where the permissions of the caller come from (ADR 0022 D3): `claim` (default) is the token as before, `directory` is identity-service (cached in Redis).

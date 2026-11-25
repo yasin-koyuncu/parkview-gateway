@@ -23,7 +23,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * ADR 0022 D3 on the real security chain and the real rules: with {@code parkview.permissions.source=directory} the permissions of the caller come from the directory and not
  * from the token, and a directory that cannot answer is a 503, never a 403 and never "allowed". Runs on a mock server like the authorisation matrix (no sockets).
  */
-@SpringBootTest(classes = AuthorizationTestApp.class, properties = {"SUPABASE_URL=http://issuer.test", "parkview.gateway.trusted-proxies=0",
+@SpringBootTest(classes = AuthorizationTestApp.class, properties = {"PARKVIEW_SECURITY_ISSUER=http://issuer.test", "parkview.gateway.trusted-proxies=0",
         "parkview.permissions.source=directory"})
 @Import(DirectoryAuthorizationTest.Directory.class)
 class DirectoryAuthorizationTest {

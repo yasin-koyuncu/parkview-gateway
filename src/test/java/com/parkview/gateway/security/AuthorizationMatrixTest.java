@@ -23,7 +23,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * claim being the only source of permissions, the explicit "any valid token" rules and the deny-by-default cases. Runs on a mock server (no sockets), so it also works where Netty
  * cannot open a loopback connection.
  */
-@SpringBootTest(classes = AuthorizationTestApp.class, properties = {"SUPABASE_URL=http://issuer.test", "parkview.gateway.trusted-proxies=0"})
+@SpringBootTest(classes = AuthorizationTestApp.class, properties = {"PARKVIEW_SECURITY_ISSUER=http://issuer.test", "parkview.gateway.trusted-proxies=0"})
 class AuthorizationMatrixTest {
 
     /** method, path, permission that guards it (see parkview.gateway.rules). */
