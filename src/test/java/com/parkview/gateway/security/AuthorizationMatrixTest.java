@@ -505,17 +505,20 @@ class AuthorizationMatrixTest {
     }
 
     @Test
-    void theAuthEndpointsArePublicByMethodAndOtherAuthPathsAreDenied() {
+    void onlyTheLanguageListIsPublicUnderAuthAndTheSignInPathsOfTheFormerFacadeAreDenied() {
+        // signing in is Keycloak's (ADR 0022 D4, ADR 0023 D5): the gateway has no rule for any of these any more, so they are denied (401 without a token, 403 with one)
+        Map<String, Object> driver = Map.of("role", "driver", "permissions", List.of());
         for (String path : List.of("/api/v1/auth/login", "/api/v1/auth/register", "/api/v1/auth/refresh", "/api/v1/auth/reset-password",
                 "/api/v1/auth/oauth/authorize", "/api/v1/auth/oauth/token", "/api/v1/auth/logout")) {
-            assertThat(status(HttpMethod.POST, path, null)).as("POST " + path).isEqualTo(200);
+            assertThat(status(HttpMethod.POST, path, null)).as("POST " + path).isEqualTo(401);
+            assertThat(status(HttpMethod.POST, path, driver)).as("POST " + path + " signed in").isEqualTo(403);
             assertThat(status(HttpMethod.GET, path, null)).as("GET " + path).isEqualTo(401);
         }
-        for (String path : List.of("/api/v1/auth/locales", "/api/v1/auth/me")) {
-            assertThat(status(HttpMethod.GET, path, null)).as("GET " + path).isEqualTo(200);
-            assertThat(status(HttpMethod.HEAD, path, null)).as("HEAD " + path).isEqualTo(200);
-            assertThat(status(HttpMethod.POST, path, null)).as("POST " + path).isEqualTo(401);
-        }
+        assertThat(status(HttpMethod.GET, "/api/v1/auth/me", null)).isEqualTo(401);
+        assertThat(status(HttpMethod.GET, "/api/v1/auth/me", driver)).isEqualTo(403);
+        assertThat(status(HttpMethod.GET, "/api/v1/auth/locales", null)).isEqualTo(200);
+        assertThat(status(HttpMethod.HEAD, "/api/v1/auth/locales", null)).isEqualTo(200);
+        assertThat(status(HttpMethod.POST, "/api/v1/auth/locales", null)).isEqualTo(401);
         assertThat(status(HttpMethod.GET, "/api/v1/auth", null)).isEqualTo(401);
         assertThat(status(HttpMethod.POST, "/api/v1/auth/other", null)).isEqualTo(401);
         assertThat(status(HttpMethod.POST, "/api/v1/auth/oauth", null)).isEqualTo(401);
@@ -661,7 +664,7 @@ class AuthorizationMatrixTest {
 
     @Test
     void publicAndAuthenticatedRoutesAreUnchanged() {
-        assertThat(status(HttpMethod.POST, "/api/v1/auth/login", null)).isEqualTo(200);
+        assertThat(status(HttpMethod.GET, "/api/v1/auth/locales", null)).isEqualTo(200);
         assertThat(status(HttpMethod.GET, "/api/v1/sessions/count/active", null)).isEqualTo(200);
         assertThat(status(HttpMethod.GET, "/api/v1/zones/nearest", Map.of("role", "driver"))).isEqualTo(200);
         assertThat(status(HttpMethod.GET, "/api/v1/mapping/zones/z1/spots", Map.of("role", "driver"))).isEqualTo(200);

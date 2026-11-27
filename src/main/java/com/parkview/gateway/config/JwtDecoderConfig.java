@@ -10,7 +10,7 @@ import org.springframework.security.oauth2.jwt.JwtValidators;
 import org.springframework.security.oauth2.jwt.NimbusReactiveJwtDecoder;
 import org.springframework.security.oauth2.jwt.ReactiveJwtDecoder;
 
-/** Verifies the Supabase JWT: ES256 signature through JWKS, issuer and audience. */
+/** Verifies the JWT of the identity provider (Keycloak): ES256 signature through JWKS, issuer and audience. */
 @Configuration
 @EnableConfigurationProperties(SecurityProperties.class)
 public class JwtDecoderConfig {

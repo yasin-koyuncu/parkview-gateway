@@ -15,7 +15,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Maps the Supabase claims to authorities (the claim parsing is {@code Role} and {@code PermissionClaims} of
+ * Maps the claims of the identity provider's token to authorities (the claim parsing is {@code Role} and {@code PermissionClaims} of
  * parkview-security-core):
  * <ul>
  *   <li>{@code app_metadata.role} (admin | operator | driver) to {@code ROLE_*}; ADMIN implies OPERATOR

@@ -185,9 +185,8 @@ class GatewayRoutingTest {
 
     @Test
     void clientCannotSpoofIdentityHeadersOnPublicRoutes() throws Exception {
-        client.post().uri("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
+        client.get().uri("/api/v1/auth/locales")
                 .header("X-User-Id", "attacker").header("X-User-Role", "admin").header("X-Internal-Api-Key", "stolen")
-                .bodyValue("{\"email\":\"a@b.se\",\"password\":\"x\"}")
                 .exchange().expectStatus().isOk();
 
         RecordedRequest upstream = upstreamRequest();
@@ -603,19 +602,32 @@ class GatewayRoutingTest {
     }
 
     @Test
-    void oversizedBodyOnCredentialEndpointIsRejected() {
+    void theLanguageListIsRoutedToIdentityServiceWithoutATokenAndTheSignInPathsOfTheFormerFacadeAreNot() throws Exception {
+        client.get().uri("/api/v1/auth/locales").exchange().expectStatus().isOk();
+        assertThat(upstreamRequest().getPath()).isEqualTo("/api/v1/auth/locales");
+
+        // Keycloak signs people in, not a service behind the gateway: no route, no rule, denied before any service is called
+        for (String path : List.of("/api/v1/auth/login", "/api/v1/auth/register", "/api/v1/auth/refresh", "/api/v1/auth/reset-password",
+                "/api/v1/auth/oauth/authorize", "/api/v1/auth/oauth/token", "/api/v1/auth/logout")) {
+            client.post().uri(path).contentType(MediaType.APPLICATION_JSON).bodyValue("{}").exchange().expectStatus().isUnauthorized();
+        }
+        client.get().uri("/api/v1/auth/me").exchange().expectStatus().isUnauthorized();
+    }
+
+    @Test
+    void oversizedBodyOnTheStrictPublicEndpointIsRejected() {
         String big = "x".repeat(40_000);
-        client.post().uri("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
-                .bodyValue("{\"email\":\"" + big + "\"}").exchange()
+        client.post().uri("/api/v1/public/fines/f1/lookup").contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{\"plate\":\"" + big + "\"}").exchange()
                 .expectStatus().isEqualTo(HttpStatus.PAYLOAD_TOO_LARGE);
     }
 
     @Test
-    void credentialEndpointsAreRateLimitedPerClient() {
+    void theStrictPublicEndpointIsRateLimitedPerClient() {
         int tooMany = 0;
         for (int i = 0; i < 12; i++) {
-            var result = client.post().uri("/api/v1/auth/login").header("X-Forwarded-For", "203.0.113.7")
-                    .contentType(MediaType.APPLICATION_JSON).bodyValue("{\"email\":\"a@b.se\",\"password\":\"x\"}")
+            var result = client.post().uri("/api/v1/public/fines/f1/lookup").header("X-Forwarded-For", "203.0.113.7")
+                    .contentType(MediaType.APPLICATION_JSON).bodyValue("{\"plate\":\"ABC123\"}")
                     .exchange().returnResult(String.class);
             if (result.getStatus().value() == 429) {
                 tooMany++;
@@ -651,11 +663,11 @@ class GatewayRoutingTest {
 
     @Test
     void aSpoofedXForwardedForDoesNotGiveTheCallerABucketOfItsOwn() {
-        // trusted-proxies=0: X-Forwarded-For is ignored, so a new "client address" per request does not escape the login limit
+        // trusted-proxies=0: X-Forwarded-For is ignored, so a new "client address" per request does not escape the limit of the strict public endpoint
         int tooMany = 0;
         for (int i = 0; i < 12; i++) {
-            var result = client.post().uri("/api/v1/auth/login").header("X-Forwarded-For", "198.51.100." + (i + 1))
-                    .contentType(MediaType.APPLICATION_JSON).bodyValue("{\"email\":\"a@b.se\",\"password\":\"x\"}")
+            var result = client.post().uri("/api/v1/public/fines/f1/lookup").header("X-Forwarded-For", "198.51.100." + (i + 1))
+                    .contentType(MediaType.APPLICATION_JSON).bodyValue("{\"plate\":\"ABC123\"}")
                     .exchange().returnResult(String.class);
             if (result.getStatus().value() == 429) {
                 tooMany++;

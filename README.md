@@ -8,7 +8,7 @@ Browsers, drivers and cameras talk only to this service; everything behind it is
 ```
 Browser / camera --HTTPS--> api-gateway --> session | rule | mapping | payment | notification | lookup | file | auth | ingestion | ai | event-streaming
                               |
-                              +-- validates the Supabase JWT (ES256, JWKS, issuer + audience)
+                              +-- validates the Keycloak JWT (ES256, JWKS, issuer + audience)
                               +-- CORS (answered before authorisation), request id, rate limits, size limits, timeouts
                               +-- strips identity headers a client could spoof, adds the ai-detection key on the AI route
 ```
@@ -31,7 +31,7 @@ Code layout (`com.parkview.gateway`):
 
 | Path prefix | Service | Notes |
 |---|---|---|
-| `/api/v1/auth/**` | authentication-service | `login`, `register`, `reset-password`: 1 req/s per IP (burst 5), 16 KB bodies |
+| `/api/v1/auth/locales` | identity-service | the language list, public (`GET`/`HEAD`); nothing else under `/api/v1/auth` is routed: signing in, signing up, refreshing and signing out are Keycloak's (the browser talks to it directly, ADR 0022 D4, ADR 0023 D5), so the former `login`, `register`, `refresh`, `reset-password`, `oauth/**`, `logout` and `me` have neither a route nor a rule |
 | `/api/v1/access/**` | authentication-service | roles, grants and audit log (ADR 0002); `access:read` for reads, `role:manage` to create, change or delete a role (`/access/roles/**`), `access:manage` for everything else that writes (roles and sites of a user, and `POST /access/users/invite` to invite a new operator), `GET /access/me/**` for any signed-in user |
 | `/api/v1/users/**` | authentication-service | plates and profile of the signed-in user (`GET`/`POST users/me/plates`, `DELETE users/me/plates/*`, `GET`/`PUT users/me/profile`; any role, the service uses the token subject) |
 | `/api/v1/violations/**`, `/api/v1/permits/**`, `/api/v1/fines/**`, `/api/v1/disputes/**` | rule-service | fines: any signed-in user, the service decides on ownership and sites; `GET fines/*/evidence` `violation:read`; disputes: `POST fines/*/dispute`, `GET fines/*/dispute`, `GET fines/*/explanation` and `POST disputes/*/withdraw` any signed-in user (the service decides on ownership), reads of the review queue and of a dispute (`GET`/`HEAD` `/disputes`, `/disputes/**`) `fine:read`, the decision and every other change (`POST disputes/*/decision`) `fine:manage`; permits: `GET`/`HEAD` `permit:read`, grant and revoke `permit:manage` |
@@ -85,7 +85,7 @@ except health, info and the key-protected `prometheus`.
 `permission`, `read` and `write` must name a permission in the catalogue (`Permissions`, mirrors
 `parkview-e2e/contracts/permissions.json`): a misspelt or unknown name **fails the startup** instead of guarding nothing.
 
-Claims (written by the Supabase access-token hook, ADR 0002):
+Claims (issued by Keycloak: a mapper over the user attribute `role`; `permissions` only in the stack where `parkview.permissions.source=claim`, ADR 0022 D3):
 
 * `app_metadata.role` (`admin` \| `operator` \| `driver`) becomes `ROLE_*`; ADMIN implies OPERATOR.
 * The permissions of the caller come from the claim `app_metadata.permissions` (the default, `parkview.permissions.source=claim`) or from identity-service (`directory`, ADR 0022 D3,
@@ -99,7 +99,7 @@ Claims (written by the Supabase access-token hook, ADR 0002):
 * `X-User-Id`, `X-User-Role`, `X-User-Email`, `X-Internal-Api-Key` sent by a client are removed. `X-User-Id`/`X-User-Role` are then set from the verified JWT as a convenience for the services (they must not use them for authorisation).
 * CORS is part of the security chain, so preflight requests work without a token. Allowed origins: `FRONTEND_URL` (comma separated). No credentials/cookies.
 * `?token=` is honoured only on `parkview.gateway.sse-token-paths`; it is moved into the `Authorization` header and removed from the URL before proxying.
-* The rate-limit key of an anonymous call (login, cameras) is the client address resolved with Spring Cloud Gateway's `XForwardedRemoteAddressResolver.maxTrustedIndex(GATEWAY_TRUSTED_PROXIES)` (`0`: the socket address, `X-Forwarded-For` ignored), never the first `X-Forwarded-For` entry a client may have written itself; `server.forward-headers-strategy` is not set because it would take that first entry as the remote address. An authenticated call is keyed by the user. The literal bucket `unknown` is used only when no address can be resolved.
+* The rate-limit key of an anonymous call (the public fine page, camera ingest) is the client address resolved with Spring Cloud Gateway's `XForwardedRemoteAddressResolver.maxTrustedIndex(GATEWAY_TRUSTED_PROXIES)` (`0`: the socket address, `X-Forwarded-For` ignored), never the first `X-Forwarded-For` entry a client may have written itself; `server.forward-headers-strategy` is not set because it would take that first entry as the remote address. An authenticated call is keyed by the user. The literal bucket `unknown` is used only when no address can be resolved.
 * The access log records route id, status, duration and user id - never paths or query strings (they carry plates and tokens).
 * `/actuator/health` and `/actuator/info` are public; `/actuator/prometheus` requires the internal API key; everything else is denied.
 

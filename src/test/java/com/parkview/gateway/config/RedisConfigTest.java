@@ -19,7 +19,7 @@ class RedisConfigTest {
     private static final String SOCKET = "10.0.0.5";
 
     private static ServerWebExchange exchange(String remote, String... forwardedForHeaders) throws UnknownHostException {
-        MockServerHttpRequest.BaseBuilder<?> request = MockServerHttpRequest.get("/api/v1/auth/login");
+        MockServerHttpRequest.BaseBuilder<?> request = MockServerHttpRequest.get("/api/v1/public/fines/f1/lookup");
         if (remote != null) {
             request.remoteAddress(new InetSocketAddress(InetAddress.getByName(remote), 4711));
         }

@@ -1,6 +1,6 @@
 # parkview-gateway - Claude Code primary context
 
-The single entry point of Park & View (Spring Cloud Gateway on WebFlux): validates the Supabase JWT, applies the declarative rule matrix in
+The single entry point of Park & View (Spring Cloud Gateway on WebFlux): validates the Keycloak JWT, applies the declarative rule matrix in
 `application.yml`, rate limits, size limits, timeouts and routes to the services. Browsers, drivers and cameras reach nothing else.
 `AGENTS.md` is a thin pointer to this file for other agents.
 

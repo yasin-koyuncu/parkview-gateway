@@ -8,7 +8,7 @@ paths:
   - "src/test/java/com/parkview/gateway/GatewayRoutingTest.java"
   - "src/test/java/com/parkview/gateway/config/DocsRoutesConfigTest.java"
   - "src/test/java/com/parkview/gateway/config/RedisConfigTest.java"
-last-verified: 2026-11-19
+last-verified: 2026-11-26
 ---
 
 # Routes, limits and timeouts
@@ -17,7 +17,7 @@ Routing is separate from authorisation: a route without a rule in the matrix is 
 
 ## Routes (`spring.cloud.gateway.server.webflux.routes`)
 
-- The first matching route wins, so a narrower path is declared before the wider one: `auth-sensitive` before `auth-service`, `ingestion-calibration-scan` before `ingestion-service`, `payment-webhook` before `payment-service`.
+- The first matching route wins, so a narrower path is declared before the wider one: `ingestion-calibration-scan` before `ingestion-service`, `payment-webhook` before `payment-service`.
 - `uri` is always `${parkview.gateway.services.<name>.url}`. The base URL and its default port are defined once under `parkview.gateway.services` (name, `url`, `docs`). Adding a service is one line there, its route, and its rules.
   The names follow the environment variables (`RULE_ENGINE_URL`, `PARKING_MAPPING_URL`, `AUTH_SERVICE_URL`, ...); do not rename one without the compose files and the README table.
 - Rate-limit tiers (`rate-credentials`, `-standard`, `-staff`, `-sessions`, `-expensive`), body limits (`body-16kb` ... `body-12mb`) and `retry-get` are written once in the `route-templates` block and used as `- *name`.
